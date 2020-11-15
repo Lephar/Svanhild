@@ -1,15 +1,16 @@
 #include "Silibrand.hpp"
 
-std::string title, game, engine;
-uint32_t width, height;
 GLFWwindow *window;
-
 vk::Instance instance;
 vk::SurfaceKHR surface;
 vk::PhysicalDevice physicalDevice;
 vk::Device device;
 vk::Queue queue;
 vk::CommandPool commandPool;
+svh::Details details;
+vk::SwapchainKHR swapchain;
+std::vector<vk::Image> swapchainImages;
+std::vector<vk::ImageView> swapchainViews;
 
 #ifndef NDEBUG
 
@@ -21,25 +22,20 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 											   const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
 											   void *pUserData) {
 	static_cast<void>(type);
-	static_cast<void>(severity);
 	static_cast<void>(pUserData);
 
-	std::cout << pCallbackData->pMessage << std::endl;
+	if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+		std::cout << pCallbackData->pMessage << std::endl;
+
 	return VK_FALSE;
 }
 
 #endif
 
 void initializeCore() {
-	width = 800;
-	height = 600;
-	title = "0";
-	game = "Silibrand";
-	engine = "Svanhild Engine";
-
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
+	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
 	//glfwGetCursorPos(window, &mouseX, &mouseY);
 	//glfwSetKeyCallback(window, keyboardCallback);
 	//glfwSetCursorPosCallback(window, mouseCallback);
@@ -54,9 +50,9 @@ void initializeCore() {
 #endif
 
 	vk::ApplicationInfo applicationInfo{};
-	applicationInfo.pApplicationName = game.c_str();
+	applicationInfo.pApplicationName = "Silibrand";
 	applicationInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-	applicationInfo.pEngineName = engine.c_str();
+	applicationInfo.pEngineName = "Svanhild Engine";
 	applicationInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
 	applicationInfo.apiVersion = VK_API_VERSION_1_2;
 
@@ -98,10 +94,10 @@ void initializeCore() {
 vk::PhysicalDevice pickPhysicalDevice() {
 	auto physicalDevices = instance.enumeratePhysicalDevices();
 
-	for(auto &temporaryDevice : physicalDevices) {
+	for (auto &temporaryDevice : physicalDevices) {
 		auto properties = temporaryDevice.getProperties();
 
-		if(properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
+		if (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
 			return temporaryDevice;
 	}
 
@@ -112,11 +108,11 @@ vk::PhysicalDevice pickPhysicalDevice() {
 uint32_t selectQueueFamily() {
 	auto queueFamilies = physicalDevice.getQueueFamilyProperties();
 
-	for(uint32_t index = 0; index < queueFamilies.size(); index++){
+	for (uint32_t index = 0; index < queueFamilies.size(); index++) {
 		auto graphicsSupport = queueFamilies.at(index).queueFlags & vk::QueueFlagBits::eGraphics;
 		auto presentSupport = physicalDevice.getSurfaceSupportKHR(index, surface);
 
-		if(graphicsSupport && presentSupport)
+		if (graphicsSupport && presentSupport)
 			return index;
 	}
 
@@ -125,14 +121,14 @@ uint32_t selectQueueFamily() {
 
 void createDevice() {
 	physicalDevice = pickPhysicalDevice();
-	auto queueFamilyIndex = selectQueueFamily();
+	auto familyIndex = selectQueueFamily();
 
-	float_t queuePriority = 1.0f;
+	auto queuePriority = 1.0f;
 	vk::PhysicalDeviceFeatures deviceFeatures{};
 	std::vector<const char *> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 	vk::DeviceQueueCreateInfo queueInfo{};
-	queueInfo.queueFamilyIndex = queueFamilyIndex;
+	queueInfo.queueFamilyIndex = familyIndex;
 	queueInfo.queueCount = 1;
 	queueInfo.pQueuePriorities = &queuePriority;
 
@@ -140,28 +136,122 @@ void createDevice() {
 	deviceInfo.queueCreateInfoCount = 1;
 	deviceInfo.pQueueCreateInfos = &queueInfo;
 	deviceInfo.pEnabledFeatures = &deviceFeatures;
-	deviceInfo.enabledLayerCount = 0;
-	deviceInfo.ppEnabledLayerNames = nullptr;
 	deviceInfo.enabledExtensionCount = extensions.size();
 	deviceInfo.ppEnabledExtensionNames = extensions.data();
 
 	vk::CommandPoolCreateInfo poolInfo{};
-	poolInfo.queueFamilyIndex = queueFamilyIndex;
+	poolInfo.queueFamilyIndex = familyIndex;
 
 	device = physicalDevice.createDevice(deviceInfo);
-	queue = device.getQueue(queueFamilyIndex, 0);
+	queue = device.getQueue(familyIndex, 0);
 	commandPool = device.createCommandPool(poolInfo);
+}
+
+svh::Details generateDetails() {
+	svh::Details temporaryDetails;
+
+	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
+
+	glfwGetFramebufferSize(window, reinterpret_cast<int *>(&surfaceCapabilities.currentExtent.width),
+						   reinterpret_cast<int *>(&surfaceCapabilities.currentExtent.height));
+	surfaceCapabilities.currentExtent.width = std::max(surfaceCapabilities.minImageExtent.width,
+													   std::min(surfaceCapabilities.maxImageExtent.width,
+																surfaceCapabilities.currentExtent.width));
+	surfaceCapabilities.currentExtent.height = std::max(surfaceCapabilities.minImageExtent.height,
+														std::min(surfaceCapabilities.maxImageExtent.height,
+																 surfaceCapabilities.currentExtent.height));
+
+	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
+	temporaryDetails.swapchainTransform = surfaceCapabilities.currentTransform;
+	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
+
+	auto surfaceFormats = physicalDevice.getSurfaceFormatsKHR(surface);
+	temporaryDetails.surfaceFormat = surfaceFormats.front();
+
+	for (auto &surfaceFormat : surfaceFormats)
+		if (surfaceFormat.format == vk::Format::eB8G8R8A8Srgb &&
+			surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+			temporaryDetails.surfaceFormat = surfaceFormat;
+
+	auto presentModes = physicalDevice.getSurfacePresentModesKHR(surface);
+	auto immediateSupport = false;
+	temporaryDetails.presentMode = vk::PresentModeKHR::eFifo;
+
+	for (auto &presentMode : presentModes) {
+		if (presentMode == vk::PresentModeKHR::eMailbox) {
+			temporaryDetails.presentMode = vk::PresentModeKHR::eMailbox;
+			break;
+		} else if (presentMode == vk::PresentModeKHR::eImmediate)
+			immediateSupport = true;
+	}
+
+	if (immediateSupport && temporaryDetails.presentMode != vk::PresentModeKHR::eMailbox)
+		temporaryDetails.presentMode = vk::PresentModeKHR::eImmediate;
+
+	return temporaryDetails;
+}
+
+VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags flags) {
+	vk::ImageViewCreateInfo viewInfo{};
+	viewInfo.viewType = vk::ImageViewType::e2D;
+	viewInfo.image = image;
+	viewInfo.format = format;
+	viewInfo.components.r = vk::ComponentSwizzle::eIdentity;
+	viewInfo.components.g = vk::ComponentSwizzle::eIdentity;
+	viewInfo.components.b = vk::ComponentSwizzle::eIdentity;
+	viewInfo.components.a = vk::ComponentSwizzle::eIdentity;
+	viewInfo.subresourceRange.aspectMask = flags;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.layerCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+
+	return device.createImageView(viewInfo);
+}
+
+void createSwapchain() {
+	details = generateDetails();
+
+	vk::SwapchainCreateInfoKHR swapchainInfo{};
+	swapchainInfo.flags = vk::SwapchainCreateFlagsKHR{};
+	swapchainInfo.surface = surface;
+	swapchainInfo.minImageCount = details.imageCount;
+	swapchainInfo.imageFormat = details.surfaceFormat.format;
+	swapchainInfo.imageColorSpace = details.surfaceFormat.colorSpace;
+	swapchainInfo.imageExtent = details.swapchainExtent;
+	swapchainInfo.imageArrayLayers = 1;
+	swapchainInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+	swapchainInfo.queueFamilyIndexCount = 0;
+	swapchainInfo.pQueueFamilyIndices = nullptr;
+	swapchainInfo.preTransform = details.swapchainTransform;
+	swapchainInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+	swapchainInfo.imageSharingMode = vk::SharingMode::eExclusive;
+	swapchainInfo.presentMode = vk::PresentModeKHR::eImmediate;
+	swapchainInfo.clipped = true;
+	swapchainInfo.oldSwapchain = nullptr;
+
+	swapchain = device.createSwapchainKHR(swapchainInfo);
+	swapchainImages = device.getSwapchainImagesKHR(swapchain);
+	details.imageCount = swapchainImages.size();
+
+	for (auto &swapchainImage : swapchainImages)
+		swapchainViews.push_back(
+				createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor));
 }
 
 void setup() {
 	initializeCore();
 	createDevice();
+	createSwapchain();
 }
 
 void draw() {
 }
 
 void clear() {
+	for (auto &swapchainView : swapchainViews)
+		device.destroyImageView(swapchainView);
+	device.destroySwapchainKHR(swapchain);
 	device.destroyCommandPool(commandPool);
 	device.destroy();
 	instance.destroySurfaceKHR(surface);

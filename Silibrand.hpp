@@ -22,3 +22,15 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+
+namespace svh {
+	struct Details {
+		uint32_t imageCount;
+		vk::Extent2D swapchainExtent;
+		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
+		vk::SurfaceFormatKHR surfaceFormat;
+		vk::PresentModeKHR presentMode;
+		uint32_t mipLevels;
+		vk::SampleCountFlagBits sampleCount;
+	};
+}
