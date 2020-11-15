@@ -6,6 +6,10 @@ GLFWwindow *window;
 
 vk::Instance instance;
 vk::SurfaceKHR surface;
+vk::PhysicalDevice physicalDevice;
+vk::Device device;
+vk::Queue queue;
+vk::CommandPool commandPool;
 
 #ifndef NDEBUG
 
@@ -90,14 +94,76 @@ void initializeCore() {
 	surface = vk::SurfaceKHR{surfaceHandle};
 }
 
+//TODO: Implement a better device selection
+vk::PhysicalDevice pickPhysicalDevice() {
+	auto physicalDevices = instance.enumeratePhysicalDevices();
+
+	for(auto &temporaryDevice : physicalDevices) {
+		auto properties = temporaryDevice.getProperties();
+
+		if(properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
+			return temporaryDevice;
+	}
+
+	return physicalDevices.front();
+}
+
+//TODO: Add exclusive queue family support
+uint32_t selectQueueFamily() {
+	auto queueFamilies = physicalDevice.getQueueFamilyProperties();
+
+	for(uint32_t index = 0; index < queueFamilies.size(); index++){
+		auto graphicsSupport = queueFamilies.at(index).queueFlags & vk::QueueFlagBits::eGraphics;
+		auto presentSupport = physicalDevice.getSurfaceSupportKHR(index, surface);
+
+		if(graphicsSupport && presentSupport)
+			return index;
+	}
+
+	return std::numeric_limits<uint32_t>::max();
+}
+
+void createDevice() {
+	physicalDevice = pickPhysicalDevice();
+	auto queueFamilyIndex = selectQueueFamily();
+
+	float_t queuePriority = 1.0f;
+	vk::PhysicalDeviceFeatures deviceFeatures{};
+	std::vector<const char *> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
+	vk::DeviceQueueCreateInfo queueInfo{};
+	queueInfo.queueFamilyIndex = queueFamilyIndex;
+	queueInfo.queueCount = 1;
+	queueInfo.pQueuePriorities = &queuePriority;
+
+	vk::DeviceCreateInfo deviceInfo{};
+	deviceInfo.queueCreateInfoCount = 1;
+	deviceInfo.pQueueCreateInfos = &queueInfo;
+	deviceInfo.pEnabledFeatures = &deviceFeatures;
+	deviceInfo.enabledLayerCount = 0;
+	deviceInfo.ppEnabledLayerNames = nullptr;
+	deviceInfo.enabledExtensionCount = extensions.size();
+	deviceInfo.ppEnabledExtensionNames = extensions.data();
+
+	vk::CommandPoolCreateInfo poolInfo{};
+	poolInfo.queueFamilyIndex = queueFamilyIndex;
+
+	device = physicalDevice.createDevice(deviceInfo);
+	queue = device.getQueue(queueFamilyIndex, 0);
+	commandPool = device.createCommandPool(poolInfo);
+}
+
 void setup() {
 	initializeCore();
+	createDevice();
 }
 
 void draw() {
 }
 
 void clear() {
+	device.destroyCommandPool(commandPool);
+	device.destroy();
 	instance.destroySurfaceKHR(surface);
 #ifndef NDEBUG
 	instance.destroyDebugUtilsMessengerEXT(messenger, nullptr, loader);
