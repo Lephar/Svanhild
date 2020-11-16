@@ -16,6 +16,10 @@ vk::ShaderModule vertexShader, fragmentShader;
 vk::DescriptorSetLayout descriptorSetLayout;
 vk::PipelineLayout pipelineLayout;
 vk::Pipeline graphicsPipeline;
+vk::Image depthImage, colorImage;
+vk::ImageView depthView, colorView;
+vk::DeviceMemory depthMemory, colorMemory;
+std::vector<vk::Framebuffer> framebuffers;
 
 #ifndef NDEBUG
 
@@ -695,18 +699,54 @@ void copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t imageWidth, 
 	endSingleTimeCommand(commandBuffer);
 }
 
+void createFramebuffers() {
+	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
+				details.surfaceFormat.format, vk::ImageTiling::eOptimal,
+				vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage, colorMemory);
+	colorView = createImageView(colorImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1);
+
+	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
+				details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthMemory);
+	depthView = createImageView(depthImage, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
+
+	for (auto &swapchainView : swapchainViews) {
+		std::array<vk::ImageView, 3> attachments{colorView, depthView, swapchainView};
+
+		vk::FramebufferCreateInfo framebufferInfo{};
+		framebufferInfo.renderPass = renderPass;
+		framebufferInfo.attachmentCount = attachments.size();
+		framebufferInfo.pAttachments = attachments.data();
+		framebufferInfo.width = details.swapchainExtent.width;
+		framebufferInfo.height = details.swapchainExtent.height;
+		framebufferInfo.layers = 1;
+
+		framebuffers.push_back(device.createFramebuffer(framebufferInfo));
+	}
+}
+
 void setup() {
 	initializeCore();
 	createDevice();
 	createSwapchain();
 	createRenderPass();
 	createPipeline();
+	createFramebuffers();
 }
 
 void draw() {
 }
 
 void clear() {
+	for (auto &framebuffer : framebuffers)
+		device.destroyFramebuffer(framebuffer);
+	device.destroyImageView(colorView);
+	device.destroyImageView(depthView);
+	device.destroyImage(colorImage);
+	device.destroyImage(depthImage);
+	device.freeMemory(colorMemory);
+	device.freeMemory(depthMemory);
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipelineLayout(pipelineLayout);
 	device.destroyDescriptorSetLayout(descriptorSetLayout);
