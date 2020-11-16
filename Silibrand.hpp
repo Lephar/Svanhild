@@ -34,4 +34,16 @@ namespace svh {
 		uint32_t mipLevels;
 		vk::SampleCountFlagBits sampleCount;
 	};
+
+	struct Vertex {
+		glm::vec3 pos;
+		glm::vec3 nor;
+		glm::vec2 tex;
+	};
+
+	struct Camera {
+		glm::mat4 model;
+		glm::mat4 view;
+		glm::mat4 proj;
+	};
 }

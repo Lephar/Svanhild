@@ -12,6 +12,10 @@ vk::SwapchainKHR swapchain;
 std::vector<vk::Image> swapchainImages;
 std::vector<vk::ImageView> swapchainViews;
 vk::RenderPass renderPass;
+vk::ShaderModule vertexShader, fragmentShader;
+vk::DescriptorSetLayout descriptorSetLayout;
+vk::PipelineLayout pipelineLayout;
+vk::Pipeline graphicsPipeline;
 
 #ifndef NDEBUG
 
@@ -214,6 +218,8 @@ svh::Details generateDetails() {
 	else
 		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e1;
 
+	temporaryDetails.mipLevels = 1;
+
 	return temporaryDetails;
 }
 
@@ -339,17 +345,216 @@ void createRenderPass() {
 	renderPass = device.createRenderPass(renderPassInfo, nullptr);
 }
 
+vk::ShaderModule loadShader(std::string path) {
+	std::ifstream file(path, std::ios::binary | std::ios::ate);
+	auto size = file.tellg();
+	file.seekg(0, std::ios::beg);
+	std::vector<uint32_t> data(size / sizeof(uint32_t));
+	file.read(reinterpret_cast<char *>(data.data()), size);
+
+	vk::ShaderModuleCreateInfo shaderInfo{};
+	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
+	shaderInfo.codeSize = size;
+	shaderInfo.pCode = data.data();
+
+	return device.createShaderModule(shaderInfo);
+}
+
+void createPipeline() {
+	vertexShader = loadShader("shaders/vert.spv");
+	fragmentShader = loadShader("shaders/frag.spv");
+
+	vk::PipelineShaderStageCreateInfo vertexInfo{};
+	vertexInfo.stage = vk::ShaderStageFlagBits::eVertex;
+	vertexInfo.module = vertexShader;
+	vertexInfo.pName = "main";
+	vertexInfo.pSpecializationInfo = nullptr;
+
+	vk::PipelineShaderStageCreateInfo fragmentInfo{};
+	fragmentInfo.stage = vk::ShaderStageFlagBits::eFragment;
+	fragmentInfo.module = fragmentShader;
+	fragmentInfo.pName = "main";
+	fragmentInfo.pSpecializationInfo = nullptr;
+
+	std::array<vk::PipelineShaderStageCreateInfo, 2> shaderStages{vertexInfo, fragmentInfo};
+
+	vk::VertexInputBindingDescription bindingDescription{};
+	bindingDescription.binding = 0;
+	bindingDescription.stride = sizeof(svh::Vertex);
+	bindingDescription.inputRate = vk::VertexInputRate::eVertex;
+
+	vk::VertexInputAttributeDescription positionDescription{};
+	positionDescription.binding = 0;
+	positionDescription.location = 0;
+	positionDescription.format = vk::Format::eR32G32B32Sfloat;
+	positionDescription.offset = offsetof(svh::Vertex, pos);
+
+	vk::VertexInputAttributeDescription normalDescription{};
+	normalDescription.binding = 0;
+	normalDescription.location = 1;
+	normalDescription.format = vk::Format::eR32G32B32Sfloat;
+	normalDescription.offset = offsetof(svh::Vertex, nor);
+
+	vk::VertexInputAttributeDescription textureDescription{};
+	textureDescription.binding = 0;
+	textureDescription.location = 2;
+	textureDescription.format = vk::Format::eR32G32Sfloat;
+	textureDescription.offset = offsetof(svh::Vertex, tex);
+
+	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{positionDescription, normalDescription, textureDescription};
+
+	vk::PipelineVertexInputStateCreateInfo inputInfo{};
+	inputInfo.vertexBindingDescriptionCount = 1;
+	inputInfo.pVertexBindingDescriptions = &bindingDescription;
+	inputInfo.vertexAttributeDescriptionCount = attributeDescriptions.size();
+	inputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+	vk::PipelineInputAssemblyStateCreateInfo assemblyInfo{};
+	assemblyInfo.topology = vk::PrimitiveTopology::eTriangleList;
+	assemblyInfo.primitiveRestartEnable = false;
+
+	vk::Viewport viewport{};
+	viewport.x = 0.0f;
+	viewport.y = 0.0f;
+	viewport.width = details.swapchainExtent.width;
+	viewport.height = details.swapchainExtent.height;
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+
+	vk::Offset2D offset{};
+	offset.x = 0;
+	offset.y = 0;
+
+	vk::Rect2D scissor{};
+	scissor.offset = offset;
+	scissor.extent = details.swapchainExtent;
+
+	vk::PipelineViewportStateCreateInfo viewportInfo{};
+	viewportInfo.viewportCount = 1;
+	viewportInfo.pViewports = &viewport;
+	viewportInfo.scissorCount = 1;
+	viewportInfo.pScissors = &scissor;
+
+	vk::PipelineRasterizationStateCreateInfo rasterizerInfo{};
+	rasterizerInfo.depthClampEnable = false;
+	rasterizerInfo.rasterizerDiscardEnable = false;
+	rasterizerInfo.polygonMode = vk::PolygonMode::eFill;
+	rasterizerInfo.lineWidth = 1.0f;
+	rasterizerInfo.cullMode = vk::CullModeFlagBits::eBack;
+	rasterizerInfo.frontFace = vk::FrontFace::eCounterClockwise;
+	rasterizerInfo.depthBiasEnable = false;
+	rasterizerInfo.depthBiasConstantFactor = 0.0f;
+	rasterizerInfo.depthBiasClamp = 0.0f;
+	rasterizerInfo.depthBiasSlopeFactor = 0.0f;
+
+	vk::PipelineMultisampleStateCreateInfo multisamplingInfo{};
+	multisamplingInfo.sampleShadingEnable = false;
+	multisamplingInfo.rasterizationSamples = details.sampleCount;
+	multisamplingInfo.minSampleShading = 1.0f;
+	multisamplingInfo.pSampleMask = nullptr;
+	multisamplingInfo.alphaToCoverageEnable = false;
+	multisamplingInfo.alphaToOneEnable = false;
+
+	vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+	depthStencil.depthTestEnable = true;
+	depthStencil.depthWriteEnable = true;
+	depthStencil.depthCompareOp = vk::CompareOp::eLess;
+	depthStencil.depthBoundsTestEnable = false;
+	depthStencil.minDepthBounds = 0.0f;
+	depthStencil.maxDepthBounds = 1.0f;
+	depthStencil.stencilTestEnable = false;
+	depthStencil.front = vk::StencilOpState{};
+	depthStencil.back = vk::StencilOpState{};
+
+	vk::PipelineColorBlendAttachmentState blendAttachment{};
+	blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
+									 vk::ColorComponentFlagBits::eG |
+									 vk::ColorComponentFlagBits::eB |
+									 vk::ColorComponentFlagBits::eA;
+	blendAttachment.blendEnable = true;
+	blendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+	blendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+	blendAttachment.colorBlendOp = vk::BlendOp::eAdd;
+	blendAttachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+	blendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eZero;
+	blendAttachment.alphaBlendOp = vk::BlendOp::eAdd;
+
+	std::array<float, 4> blendConstants{0.0f, 0.0f, 0.0f, 0.0f};
+
+	vk::PipelineColorBlendStateCreateInfo blendInfo{};
+	blendInfo.logicOpEnable = VK_FALSE;
+	blendInfo.logicOp = vk::LogicOp::eCopy;
+	blendInfo.attachmentCount = 1;
+	blendInfo.pAttachments = &blendAttachment;
+	blendInfo.blendConstants = blendConstants;
+
+	vk::DescriptorSetLayoutBinding cameraLayoutBinding{};
+	cameraLayoutBinding.binding = 0;
+	cameraLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+	cameraLayoutBinding.descriptorCount = 1;
+	cameraLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+	cameraLayoutBinding.pImmutableSamplers = nullptr;
+
+	vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
+	samplerLayoutBinding.binding = 1;
+	samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+	samplerLayoutBinding.descriptorCount = 1;
+	samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+	samplerLayoutBinding.pImmutableSamplers = nullptr;
+
+	std::array<vk::DescriptorSetLayoutBinding, 2> bindings{cameraLayoutBinding, samplerLayoutBinding};
+
+	vk::DescriptorSetLayoutCreateInfo descriptorInfo{};
+	descriptorInfo.bindingCount = bindings.size();
+	descriptorInfo.pBindings = bindings.data();
+
+	descriptorSetLayout = device.createDescriptorSetLayout(descriptorInfo);
+
+	vk::PipelineLayoutCreateInfo layoutInfo{};
+	layoutInfo.setLayoutCount = 1;
+	layoutInfo.pSetLayouts = &descriptorSetLayout;
+	layoutInfo.pushConstantRangeCount = 0;
+	layoutInfo.pPushConstantRanges = nullptr;
+
+	pipelineLayout = device.createPipelineLayout(layoutInfo);
+
+	vk::GraphicsPipelineCreateInfo pipelineInfo{};
+	pipelineInfo.stageCount = shaderStages.size();
+	pipelineInfo.pStages = shaderStages.data();
+	pipelineInfo.pVertexInputState = &inputInfo;
+	pipelineInfo.pInputAssemblyState = &assemblyInfo;
+	pipelineInfo.pRasterizationState = &rasterizerInfo;
+	pipelineInfo.pMultisampleState = &multisamplingInfo;
+	pipelineInfo.pDepthStencilState = &depthStencil;
+	pipelineInfo.pColorBlendState = &blendInfo;
+	pipelineInfo.pViewportState = &viewportInfo;
+	pipelineInfo.pDynamicState = nullptr;
+	pipelineInfo.layout = pipelineLayout;
+	pipelineInfo.renderPass = renderPass;
+	pipelineInfo.subpass = 0;
+	pipelineInfo.basePipelineHandle = nullptr;
+	pipelineInfo.basePipelineIndex = -1;
+
+	graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+}
+
 void setup() {
 	initializeCore();
 	createDevice();
 	createSwapchain();
 	createRenderPass();
+	createPipeline();
 }
 
 void draw() {
 }
 
 void clear() {
+	device.destroyPipeline(graphicsPipeline);
+	device.destroyPipelineLayout(pipelineLayout);
+	device.destroyDescriptorSetLayout(descriptorSetLayout);
+	device.destroyShaderModule(fragmentShader);
+	device.destroyShaderModule(vertexShader);
 	device.destroyRenderPass(renderPass);
 	for (auto &swapchainView : swapchainViews)
 		device.destroyImageView(swapchainView);
