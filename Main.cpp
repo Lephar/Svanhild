@@ -223,7 +223,7 @@ svh::Details generateDetails() {
 	return temporaryDetails;
 }
 
-VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags flags) {
+VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags flags, uint32_t mipLevels) {
 	vk::ImageViewCreateInfo viewInfo{};
 	viewInfo.viewType = vk::ImageViewType::e2D;
 	viewInfo.image = image;
@@ -233,7 +233,7 @@ VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectF
 	viewInfo.components.b = vk::ComponentSwizzle::eIdentity;
 	viewInfo.components.a = vk::ComponentSwizzle::eIdentity;
 	viewInfo.subresourceRange.aspectMask = flags;
-	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.levelCount = mipLevels;
 	viewInfo.subresourceRange.baseMipLevel = 0;
 	viewInfo.subresourceRange.layerCount = 1;
 	viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -268,7 +268,7 @@ void createSwapchain() {
 
 	for (auto &swapchainImage : swapchainImages)
 		swapchainViews.push_back(
-				createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor));
+				createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
 }
 
 void createRenderPass() {
@@ -401,7 +401,8 @@ void createPipeline() {
 	textureDescription.format = vk::Format::eR32G32Sfloat;
 	textureDescription.offset = offsetof(svh::Vertex, tex);
 
-	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{positionDescription, normalDescription, textureDescription};
+	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{positionDescription, normalDescription,
+																			 textureDescription};
 
 	vk::PipelineVertexInputStateCreateInfo inputInfo{};
 	inputInfo.vertexBindingDescriptionCount = 1;
@@ -536,6 +537,162 @@ void createPipeline() {
 	pipelineInfo.basePipelineIndex = -1;
 
 	graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+}
+
+vk::CommandBuffer beginSingleTimeCommand() {
+	vk::CommandBufferAllocateInfo allocateInfo{};
+	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
+	allocateInfo.commandPool = commandPool;
+	allocateInfo.commandBufferCount = 1;
+
+	vk::CommandBufferBeginInfo beginInfo{};
+	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+	auto commandBuffer = device.allocateCommandBuffers(allocateInfo).at(0);
+	commandBuffer.begin(beginInfo);
+	return commandBuffer;
+}
+
+void endSingleTimeCommand(vk::CommandBuffer commandBuffer) {
+	commandBuffer.end();
+
+	vk::SubmitInfo submitInfo{};
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	static_cast<void>(queue.submit(1, &submitInfo, nullptr));
+	queue.waitIdle();
+	device.freeCommandBuffers(commandPool, 1, &commandBuffer);
+}
+
+uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
+	auto memoryProperties = physicalDevice.getMemoryProperties();
+
+	for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; index++)
+		if ((filter & (1 << index)) && (memoryProperties.memoryTypes[index].propertyFlags & flags) == flags)
+			return index;
+
+	return std::numeric_limits<uint32_t>::max();
+}
+
+void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties,
+				  vk::Buffer &buffer, vk::DeviceMemory &bufferMemory) {
+	vk::BufferCreateInfo bufferInfo{};
+	bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+	bufferInfo.usage = usage;
+	bufferInfo.size = size;
+
+	buffer = device.createBuffer(bufferInfo);
+	auto memoryRequirements = device.getBufferMemoryRequirements(buffer);
+
+	vk::MemoryAllocateInfo allocateInfo{};
+	allocateInfo.allocationSize = memoryRequirements.size;
+	allocateInfo.memoryTypeIndex = chooseMemoryType(memoryRequirements.memoryTypeBits, properties);
+
+	bufferMemory = device.allocateMemory(allocateInfo);
+	device.bindBufferMemory(buffer, bufferMemory, 0);
+}
+
+void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
+	vk::BufferCopy copyRegion{};
+	copyRegion.srcOffset = 0;
+	copyRegion.dstOffset = 0;
+	copyRegion.size = size;
+
+	auto commandBuffer = beginSingleTimeCommand();
+	commandBuffer.copyBuffer(srcBuffer, dstBuffer, 1, &copyRegion);
+	endSingleTimeCommand(commandBuffer);
+}
+
+void createImage(uint32_t imageWidth, uint32_t imageHeight, uint32_t mipLevels, vk::SampleCountFlagBits samples,
+				 vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+				 vk::MemoryPropertyFlags properties, vk::Image &image, vk::DeviceMemory &imageMemory) {
+	vk::ImageCreateInfo imageInfo{};
+	imageInfo.imageType = vk::ImageType::e2D;
+	imageInfo.extent.width = imageWidth;
+	imageInfo.extent.height = imageHeight;
+	imageInfo.extent.depth = 1;
+	imageInfo.mipLevels = mipLevels;
+	imageInfo.arrayLayers = 1;
+	imageInfo.format = format;
+	imageInfo.tiling = tiling;
+	imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+	imageInfo.usage = usage;
+	imageInfo.samples = samples;
+	imageInfo.sharingMode = vk::SharingMode::eExclusive;
+
+	image = device.createImage(imageInfo);
+	auto memoryRequirements = device.getImageMemoryRequirements(image);
+
+	vk::MemoryAllocateInfo allocateInfo{};
+	allocateInfo.allocationSize = memoryRequirements.size;
+	allocateInfo.memoryTypeIndex = chooseMemoryType(memoryRequirements.memoryTypeBits, properties);
+
+	imageMemory = device.allocateMemory(allocateInfo);
+	device.bindImageMemory(image, imageMemory, 0);
+}
+
+void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels) {
+	auto commandBuffer = beginSingleTimeCommand();
+
+	vk::ImageMemoryBarrier barrier{};
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = mipLevels;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+
+	vk::PipelineStageFlags sourceStage, destinationStage;
+
+	if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+		barrier.srcAccessMask = vk::AccessFlags{};
+		barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+		sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+		destinationStage = vk::PipelineStageFlagBits::eTransfer;
+	} else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+			   newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+		barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+		barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+		sourceStage = vk::PipelineStageFlagBits::eTransfer;
+		destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+	}
+
+	commandBuffer.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{},
+								  0, nullptr, 0, nullptr, 1, &barrier);
+	endSingleTimeCommand(commandBuffer);
+}
+
+void copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t imageWidth, uint32_t imageHeight) {
+	auto commandBuffer = beginSingleTimeCommand();
+
+	vk::Offset3D offset{};
+	offset.x = 0;
+	offset.y = 0;
+	offset.z = 0;
+
+	vk::Extent3D extent{};
+	extent.width = imageWidth;
+	extent.height = imageHeight;
+	extent.depth = 1;
+
+	vk::BufferImageCopy region{};
+	region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+	region.imageSubresource.mipLevel = 0;
+	region.imageSubresource.baseArrayLayer = 0;
+	region.imageSubresource.layerCount = 1;
+	region.bufferOffset = 0;
+	region.bufferRowLength = 0;
+	region.bufferImageHeight = 0;
+	region.imageOffset = offset;
+	region.imageExtent = extent;
+
+	commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, 1, &region);
+	endSingleTimeCommand(commandBuffer);
 }
 
 void setup() {
