@@ -28,6 +28,7 @@ namespace svh {
 		uint32_t imageCount;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
+		vk::Format depthStencilFormat;
 		vk::SurfaceFormatKHR surfaceFormat;
 		vk::PresentModeKHR presentMode;
 		uint32_t mipLevels;

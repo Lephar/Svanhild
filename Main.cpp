@@ -11,6 +11,7 @@ svh::Details details;
 vk::SwapchainKHR swapchain;
 std::vector<vk::Image> swapchainImages;
 std::vector<vk::ImageView> swapchainViews;
+vk::RenderPass renderPass;
 
 #ifndef NDEBUG
 
@@ -151,7 +152,6 @@ svh::Details generateDetails() {
 	svh::Details temporaryDetails;
 
 	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
-
 	glfwGetFramebufferSize(window, reinterpret_cast<int *>(&surfaceCapabilities.currentExtent.width),
 						   reinterpret_cast<int *>(&surfaceCapabilities.currentExtent.height));
 	surfaceCapabilities.currentExtent.width = std::max(surfaceCapabilities.minImageExtent.width,
@@ -164,6 +164,12 @@ svh::Details generateDetails() {
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
 	temporaryDetails.swapchainTransform = surfaceCapabilities.currentTransform;
 	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
+
+	temporaryDetails.depthStencilFormat = vk::Format::eD32Sfloat;
+	auto formatProperties = physicalDevice.getFormatProperties(vk::Format::eD32SfloatS8Uint);
+
+	if (formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
+		temporaryDetails.depthStencilFormat = vk::Format::eD32SfloatS8Uint;
 
 	auto surfaceFormats = physicalDevice.getSurfaceFormatsKHR(surface);
 	temporaryDetails.surfaceFormat = surfaceFormats.front();
@@ -179,7 +185,7 @@ svh::Details generateDetails() {
 
 	for (auto &presentMode : presentModes) {
 		if (presentMode == vk::PresentModeKHR::eMailbox) {
-			temporaryDetails.presentMode = vk::PresentModeKHR::eMailbox;
+			temporaryDetails.presentMode = presentMode;
 			break;
 		} else if (presentMode == vk::PresentModeKHR::eImmediate)
 			immediateSupport = true;
@@ -187,6 +193,26 @@ svh::Details generateDetails() {
 
 	if (immediateSupport && temporaryDetails.presentMode != vk::PresentModeKHR::eMailbox)
 		temporaryDetails.presentMode = vk::PresentModeKHR::eImmediate;
+
+	auto deviceProperties = physicalDevice.getProperties();
+	auto sampleCount = deviceProperties.limits.framebufferColorSampleCounts;
+	if (sampleCount > deviceProperties.limits.framebufferDepthSampleCounts)
+		sampleCount = deviceProperties.limits.framebufferDepthSampleCounts;
+
+	if (sampleCount & vk::SampleCountFlagBits::e64)
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e64;
+	else if (sampleCount & vk::SampleCountFlagBits::e32)
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e32;
+	else if (sampleCount & vk::SampleCountFlagBits::e16)
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e16;
+	else if (sampleCount & vk::SampleCountFlagBits::e8)
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e8;
+	else if (sampleCount & vk::SampleCountFlagBits::e4)
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e4;
+	else if (sampleCount & vk::SampleCountFlagBits::e2)
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e2;
+	else
+		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e1;
 
 	return temporaryDetails;
 }
@@ -239,16 +265,92 @@ void createSwapchain() {
 				createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor));
 }
 
+void createRenderPass() {
+	vk::AttachmentDescription colorAttachment{};
+	colorAttachment.format = details.surfaceFormat.format;
+	colorAttachment.samples = details.sampleCount;
+	colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+	colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+	colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+	colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+	colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
+	colorAttachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
+
+	vk::AttachmentDescription depthAttachment{};
+	depthAttachment.format = details.depthStencilFormat;
+	depthAttachment.samples = details.sampleCount;
+	depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+	depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+	depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+	depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+	depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
+	depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+	vk::AttachmentDescription resolveAttachment{};
+	resolveAttachment.format = details.surfaceFormat.format;
+	resolveAttachment.samples = vk::SampleCountFlagBits::e1;
+	resolveAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+	resolveAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+	resolveAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+	resolveAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+	resolveAttachment.initialLayout = vk::ImageLayout::eUndefined;
+	resolveAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+
+	std::array<vk::AttachmentDescription, 3> attachments{colorAttachment, depthAttachment, resolveAttachment};
+
+	vk::AttachmentReference colorReference{};
+	colorReference.attachment = 0;
+	colorReference.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+	vk::AttachmentReference depthReference{};
+	depthReference.attachment = 1;
+	depthReference.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+	vk::AttachmentReference resolveReference{};
+	resolveReference.attachment = 2;
+	resolveReference.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+	vk::SubpassDescription subpass{};
+	subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+	subpass.colorAttachmentCount = 1;
+	subpass.pColorAttachments = &colorReference;
+	subpass.pDepthStencilAttachment = &depthReference;
+	subpass.pResolveAttachments = &resolveReference;
+
+	vk::SubpassDependency dependency{};
+	dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+	dependency.dstSubpass = 0;
+	dependency.srcStageMask =
+			vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+	dependency.srcAccessMask = vk::AccessFlags{};
+	dependency.dstStageMask =
+			vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+	dependency.dstAccessMask =
+			vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+
+	vk::RenderPassCreateInfo renderPassInfo{};
+	renderPassInfo.attachmentCount = attachments.size();
+	renderPassInfo.pAttachments = attachments.data();
+	renderPassInfo.subpassCount = 1;
+	renderPassInfo.pSubpasses = &subpass;
+	renderPassInfo.dependencyCount = 1;
+	renderPassInfo.pDependencies = &dependency;
+
+	renderPass = device.createRenderPass(renderPassInfo, nullptr);
+}
+
 void setup() {
 	initializeCore();
 	createDevice();
 	createSwapchain();
+	createRenderPass();
 }
 
 void draw() {
 }
 
 void clear() {
+	device.destroyRenderPass(renderPass);
 	for (auto &swapchainView : swapchainViews)
 		device.destroyImageView(swapchainView);
 	device.destroySwapchainKHR(swapchain);
