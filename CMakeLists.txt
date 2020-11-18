@@ -8,6 +8,9 @@ add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/shaders/vert.spv COMMAND glslc $
 add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/shaders/frag.spv COMMAND glslc ${PROJECT_SOURCE_DIR}/shaders/shader.frag -o ${PROJECT_BINARY_DIR}/shaders/frag.spv -O)
 add_custom_target(Shaders ALL DEPENDS ${PROJECT_BINARY_DIR}/shaders/vert.spv ${PROJECT_BINARY_DIR}/shaders/frag.spv)
 
+file(COPY ${PROJECT_SOURCE_DIR}/models DESTINATION ${PROJECT_BINARY_DIR})
+add_custom_target(Models ALL DEPENDS ${PROJECT_BINARY_DIR}/models)
+
 add_executable(Silibrand Main.cpp)
 add_dependencies(Silibrand Shaders)
 target_precompile_headers(Silibrand PRIVATE Silibrand.hpp)

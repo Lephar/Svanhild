@@ -16,14 +16,20 @@ vk::ShaderModule vertexShader, fragmentShader;
 vk::DescriptorSetLayout descriptorSetLayout;
 vk::PipelineLayout pipelineLayout;
 vk::Pipeline graphicsPipeline;
-vk::Image depthImage, colorImage;
-vk::ImageView depthView, colorView;
-vk::DeviceMemory depthMemory, colorMemory;
+svh::Image depthImage, colorImage;
 std::vector<vk::Framebuffer> framebuffers;
+vk::Sampler sampler;
+
+
+std::vector<uint16_t> indices;
+std::vector<svh::Vertex> vertices;
+std::vector<svh::Image> images;
+std::vector<svh::Mesh> meshes;
+std::vector<svh::Model> models;
 
 #ifndef NDEBUG
 
-vk::DispatchLoaderDynamic loader;
+vk::DispatchLoaderDynamic functionLoader;
 vk::DebugUtilsMessengerEXT messenger;
 
 VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -90,8 +96,8 @@ void initializeCore() {
 	instance = vk::createInstance(instanceInfo);
 
 #ifndef NDEBUG
-	loader = vk::DispatchLoaderDynamic{instance, vkGetInstanceProcAddr};
-	messenger = instance.createDebugUtilsMessengerEXT(messengerInfo, nullptr, loader);
+	functionLoader = vk::DispatchLoaderDynamic{instance, vkGetInstanceProcAddr};
+	messenger = instance.createDebugUtilsMessengerEXT(messengerInfo, nullptr, functionLoader);
 #endif
 
 	VkSurfaceKHR surfaceHandle;
@@ -202,6 +208,8 @@ svh::Details generateDetails() {
 	if (immediateSupport && temporaryDetails.presentMode != vk::PresentModeKHR::eMailbox)
 		temporaryDetails.presentMode = vk::PresentModeKHR::eImmediate;
 
+	temporaryDetails.imageFormat = vk::Format::eR8G8B8A8Srgb;
+
 	auto deviceProperties = physicalDevice.getProperties();
 	auto sampleCount = deviceProperties.limits.framebufferColorSampleCounts;
 	if (sampleCount > deviceProperties.limits.framebufferDepthSampleCounts)
@@ -221,6 +229,7 @@ svh::Details generateDetails() {
 		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e2;
 	else
 		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e1;
+	temporaryDetails.sampleCount = vk::SampleCountFlagBits::e2;
 
 	temporaryDetails.mipLevels = 1;
 
@@ -405,8 +414,8 @@ void createPipeline() {
 	textureDescription.format = vk::Format::eR32G32Sfloat;
 	textureDescription.offset = offsetof(svh::Vertex, tex);
 
-	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{positionDescription, normalDescription,
-																			 textureDescription};
+	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{
+			positionDescription, normalDescription, textureDescription};
 
 	vk::PipelineVertexInputStateCreateInfo inputInfo{};
 	inputInfo.vertexBindingDescriptionCount = 1;
@@ -543,32 +552,6 @@ void createPipeline() {
 	graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
 }
 
-vk::CommandBuffer beginSingleTimeCommand() {
-	vk::CommandBufferAllocateInfo allocateInfo{};
-	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
-	allocateInfo.commandPool = commandPool;
-	allocateInfo.commandBufferCount = 1;
-
-	vk::CommandBufferBeginInfo beginInfo{};
-	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-
-	auto commandBuffer = device.allocateCommandBuffers(allocateInfo).at(0);
-	commandBuffer.begin(beginInfo);
-	return commandBuffer;
-}
-
-void endSingleTimeCommand(vk::CommandBuffer commandBuffer) {
-	commandBuffer.end();
-
-	vk::SubmitInfo submitInfo{};
-	submitInfo.commandBufferCount = 1;
-	submitInfo.pCommandBuffers = &commandBuffer;
-
-	static_cast<void>(queue.submit(1, &submitInfo, nullptr));
-	queue.waitIdle();
-	device.freeCommandBuffers(commandPool, 1, &commandBuffer);
-}
-
 uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
 	auto memoryProperties = physicalDevice.getMemoryProperties();
 
@@ -595,17 +578,6 @@ void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPro
 
 	bufferMemory = device.allocateMemory(allocateInfo);
 	device.bindBufferMemory(buffer, bufferMemory, 0);
-}
-
-void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
-	vk::BufferCopy copyRegion{};
-	copyRegion.srcOffset = 0;
-	copyRegion.dstOffset = 0;
-	copyRegion.size = size;
-
-	auto commandBuffer = beginSingleTimeCommand();
-	commandBuffer.copyBuffer(srcBuffer, dstBuffer, 1, &copyRegion);
-	endSingleTimeCommand(commandBuffer);
 }
 
 void createImage(uint32_t imageWidth, uint32_t imageHeight, uint32_t mipLevels, vk::SampleCountFlagBits samples,
@@ -636,9 +608,99 @@ void createImage(uint32_t imageWidth, uint32_t imageHeight, uint32_t mipLevels, 
 	device.bindImageMemory(image, imageMemory, 0);
 }
 
-void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels) {
-	auto commandBuffer = beginSingleTimeCommand();
+void createFramebuffers() {
+	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
+				details.surfaceFormat.format, vk::ImageTiling::eOptimal,
+				vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.data, colorImage.memory);
+	colorImage.view = createImageView(colorImage.data, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor,
+									  1);
 
+	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
+				details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.data, depthImage.memory);
+	depthImage.view = createImageView(depthImage.data, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
+
+	for (auto &swapchainView : swapchainViews) {
+		std::array<vk::ImageView, 3> attachments{colorImage.view, depthImage.view, swapchainView};
+
+		vk::FramebufferCreateInfo framebufferInfo{};
+		framebufferInfo.renderPass = renderPass;
+		framebufferInfo.attachmentCount = attachments.size();
+		framebufferInfo.pAttachments = attachments.data();
+		framebufferInfo.width = details.swapchainExtent.width;
+		framebufferInfo.height = details.swapchainExtent.height;
+		framebufferInfo.layers = 1;
+
+		framebuffers.push_back(device.createFramebuffer(framebufferInfo));
+	}
+}
+
+vk::CommandBuffer beginSingleTimeCommand() {
+	vk::CommandBufferAllocateInfo allocateInfo{};
+	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
+	allocateInfo.commandPool = commandPool;
+	allocateInfo.commandBufferCount = 1;
+
+	vk::CommandBufferBeginInfo beginInfo{};
+	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+	auto commandBuffer = device.allocateCommandBuffers(allocateInfo).at(0);
+	commandBuffer.begin(beginInfo);
+	return commandBuffer;
+}
+
+void endSingleTimeCommand(vk::CommandBuffer commandBuffer) {
+	commandBuffer.end();
+
+	vk::SubmitInfo submitInfo{};
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	static_cast<void>(queue.submit(1, &submitInfo, nullptr));
+	queue.waitIdle();
+	device.freeCommandBuffers(commandPool, 1, &commandBuffer);
+}
+
+void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
+	vk::BufferCopy copyRegion{};
+	copyRegion.srcOffset = 0;
+	copyRegion.dstOffset = 0;
+	copyRegion.size = size;
+
+	auto commandBuffer = beginSingleTimeCommand();
+	commandBuffer.copyBuffer(srcBuffer, dstBuffer, 1, &copyRegion);
+	endSingleTimeCommand(commandBuffer);
+}
+
+void copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t imageWidth, uint32_t imageHeight) {
+	vk::Offset3D offset{};
+	offset.x = 0;
+	offset.y = 0;
+	offset.z = 0;
+
+	vk::Extent3D extent{};
+	extent.width = imageWidth;
+	extent.height = imageHeight;
+	extent.depth = 1;
+
+	vk::BufferImageCopy region{};
+	region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+	region.imageSubresource.mipLevel = 0;
+	region.imageSubresource.baseArrayLayer = 0;
+	region.imageSubresource.layerCount = 1;
+	region.bufferOffset = 0;
+	region.bufferRowLength = 0;
+	region.bufferImageHeight = 0;
+	region.imageOffset = offset;
+	region.imageExtent = extent;
+
+	auto commandBuffer = beginSingleTimeCommand();
+	commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, 1, &region);
+	endSingleTimeCommand(commandBuffer);
+}
+
+void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels) {
 	vk::ImageMemoryBarrier barrier{};
 	barrier.oldLayout = oldLayout;
 	barrier.newLayout = newLayout;
@@ -666,64 +728,144 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 		destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
 	}
 
+	auto commandBuffer = beginSingleTimeCommand();
 	commandBuffer.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{},
 								  0, nullptr, 0, nullptr, 1, &barrier);
 	endSingleTimeCommand(commandBuffer);
 }
 
-void copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t imageWidth, uint32_t imageHeight) {
-	auto commandBuffer = beginSingleTimeCommand();
+void loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::SampleCountFlagBits samples, vk::Format format,
+			   std::vector<uint8_t> &data) {
+	svh::Image image;
+	svh::Buffer buffer;
 
-	vk::Offset3D offset{};
-	offset.x = 0;
-	offset.y = 0;
-	offset.z = 0;
+	createBuffer(data.size(), vk::BufferUsageFlagBits::eTransferSrc,
+				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.data,
+				 buffer.memory);
 
-	vk::Extent3D extent{};
-	extent.width = imageWidth;
-	extent.height = imageHeight;
-	extent.depth = 1;
+	auto imageData = device.mapMemory(buffer.memory, 0, data.size());
+	std::memcpy(imageData, data.data(), data.size());
+	device.unmapMemory(buffer.memory);
 
-	vk::BufferImageCopy region{};
-	region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-	region.imageSubresource.mipLevel = 0;
-	region.imageSubresource.baseArrayLayer = 0;
-	region.imageSubresource.layerCount = 1;
-	region.bufferOffset = 0;
-	region.bufferRowLength = 0;
-	region.bufferImageHeight = 0;
-	region.imageOffset = offset;
-	region.imageExtent = extent;
+	createImage(width, height, levels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+				vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, image.data, image.memory);
+	transitionImageLayout(image.data, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, levels);
+	copyBufferToImage(buffer.data, image.data, width, height);
+	transitionImageLayout(image.data, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+						  levels);
+	image.view = createImageView(image.data, format, vk::ImageAspectFlagBits::eColor, levels);
+	images.push_back(image);
 
-	commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, 1, &region);
-	endSingleTimeCommand(commandBuffer);
+	device.destroyBuffer(buffer.data);
+	device.freeMemory(buffer.memory);
 }
 
-void createFramebuffers() {
-	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
-				details.surfaceFormat.format, vk::ImageTiling::eOptimal,
-				vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage, colorMemory);
-	colorView = createImageView(colorImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1);
+void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 transform) {
+	for (auto &primitive : meshData.primitives) {
+		svh::Mesh mesh;
+		mesh.indexOffset = indices.size();
+		mesh.vertexOffset = vertices.size();
 
-	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
-				details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthMemory);
-	depthView = createImageView(depthImage, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
+		auto &indexView = modelData.bufferViews.at(primitive.indices);
+		auto &indexBuffer = modelData.buffers.at(indexView.buffer);
 
-	for (auto &swapchainView : swapchainViews) {
-		std::array<vk::ImageView, 3> attachments{colorView, depthView, swapchainView};
+		mesh.indexLength = indexView.byteLength / sizeof(uint16_t);
+		indices.insert(indices.end(), indexBuffer.data.begin() + indexView.byteOffset,
+					   indexBuffer.data.begin() + indexView.byteOffset + indexView.byteLength);
 
-		vk::FramebufferCreateInfo framebufferInfo{};
-		framebufferInfo.renderPass = renderPass;
-		framebufferInfo.attachmentCount = attachments.size();
-		framebufferInfo.pAttachments = attachments.data();
-		framebufferInfo.width = details.swapchainExtent.width;
-		framebufferInfo.height = details.swapchainExtent.height;
-		framebufferInfo.layers = 1;
+		std::vector<glm::vec3> positions;
+		std::vector<glm::vec3> normals;
+		std::vector<glm::vec2> texcoords;
 
-		framebuffers.push_back(device.createFramebuffer(framebufferInfo));
+		for (auto &attribute : primitive.attributes) {
+			auto &accessor = modelData.accessors.at(attribute.second);
+			auto &primitiveView = modelData.bufferViews.at(accessor.bufferView);
+			auto &primitiveBuffer = modelData.buffers.at(primitiveView.buffer);
+
+			if (attribute.first.compare("POSITION") == 0) {
+				positions.resize(primitiveView.byteLength / sizeof(glm::vec3));
+				std::memcpy(positions.data(),
+							primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+			} else if (attribute.first.compare("NORMAL") == 0) {
+				normals.resize(primitiveView.byteLength / sizeof(glm::vec3));
+				std::memcpy(normals.data(),
+							primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+			} else if (attribute.first.compare("TEXCOORD_0") == 0) {
+				texcoords.resize(primitiveView.byteLength / sizeof(glm::vec2));
+				std::memcpy(texcoords.data(),
+							primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+			}
+		}
+
+		mesh.vertexLength = texcoords.size();
+		meshes.push_back(mesh);
+
+		for (int index = 0; index < mesh.vertexLength; index++) {
+			svh::Vertex vertex;
+			vertex.pos = transform * glm::vec4{positions.at(index), 1.0f};
+			vertex.nor = transform * glm::vec4{positions.at(index), 0.0f};
+			vertex.tex = positions.at(index);
+			vertices.push_back(vertex);
+		}
 	}
+}
+
+void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 transform) {
+	glm::mat4 scale{1.0f}, rotation{1.0f}, translation{1.0f};
+
+	if (!nodeData.rotation.empty())
+		rotation = glm::rotate(static_cast<float_t>(nodeData.rotation.at(3)),
+							   glm::vec3{nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
+	for (int i = 0; i < nodeData.scale.size(); i++)
+		scale[i][i] = nodeData.scale.at(i);
+	for (int i = 0; i < nodeData.translation.size(); i++)
+		translation[3][i] = nodeData.translation.at(i);
+
+	transform = transform * translation * rotation * scale;
+
+	if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
+		loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform);
+
+	for (auto &childIndex : nodeData.children)
+		loadNode(modelData, modelData.nodes.at(childIndex), transform);
+
+	for (auto &material : modelData.materials) {
+		for (auto &value : material.values) {
+			if (!value.first.compare("baseColorTexture")) {
+				auto &image = modelData.images.at(modelData.textures.at(value.second.TextureIndex()).source);
+				meshes.at(models.back().meshIndex + value.second.TextureTexCoord()).imageIndex = images.size();
+				loadImage(image.width, image.height, details.mipLevels, details.sampleCount, details.imageFormat,
+						  image.image);
+			}
+		}
+	}
+}
+
+void loadModel(std::string filename) {
+	std::string error, warning;
+	tinygltf::TinyGLTF loader;
+	tinygltf::Model modelData;
+
+	bool result = loader.LoadBinaryFromFile(&modelData, &error, &warning, filename);
+
+#ifndef NDEBUG
+	if (!warning.empty())
+		std::cout << "GLTF Warning: " << warning << std::endl;
+	if (!error.empty())
+		std::cout << "GLTF Error: " << error << std::endl;
+	if (!result)
+		std::cout << "GLTF modelData could not be loaded!" << std::endl;
+#endif
+
+	svh::Model model;
+	model.meshIndex = meshes.size();
+	model.meshCount = 0;
+	models.push_back(model);
+	auto &scene = modelData.scenes.at(modelData.defaultScene);
+
+	for (auto &nodeIndex : scene.nodes)
+		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{1.0f});
 }
 
 void setup() {
@@ -739,14 +881,16 @@ void draw() {
 }
 
 void clear() {
+	device.destroySampler(sampler);
+
 	for (auto &framebuffer : framebuffers)
 		device.destroyFramebuffer(framebuffer);
-	device.destroyImageView(colorView);
-	device.destroyImageView(depthView);
-	device.destroyImage(colorImage);
-	device.destroyImage(depthImage);
-	device.freeMemory(colorMemory);
-	device.freeMemory(depthMemory);
+	device.destroyImageView(colorImage.view);
+	device.destroyImage(colorImage.data);
+	device.freeMemory(colorImage.memory);
+	device.destroyImageView(depthImage.view);
+	device.destroyImage(depthImage.data);
+	device.freeMemory(depthImage.memory);
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipelineLayout(pipelineLayout);
 	device.destroyDescriptorSetLayout(descriptorSetLayout);
@@ -760,7 +904,7 @@ void clear() {
 	device.destroy();
 	instance.destroySurfaceKHR(surface);
 #ifndef NDEBUG
-	instance.destroyDebugUtilsMessengerEXT(messenger, nullptr, loader);
+	instance.destroyDebugUtilsMessengerEXT(messenger, nullptr, functionLoader);
 #endif
 	instance.destroy();
 	glfwDestroyWindow(window);

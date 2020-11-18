@@ -9,6 +9,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 
+#include <array>
 #include <limits>
 #include <vector>
 #include <chrono>
@@ -31,19 +32,44 @@ namespace svh {
 		vk::Format depthStencilFormat;
 		vk::SurfaceFormatKHR surfaceFormat;
 		vk::PresentModeKHR presentMode;
+		vk::Format imageFormat;
 		uint32_t mipLevels;
 		vk::SampleCountFlagBits sampleCount;
 	};
 
 	struct Vertex {
-		glm::vec3 pos;
-		glm::vec3 nor;
+		glm::vec4 pos;
+		glm::vec4 nor;
 		glm::vec2 tex;
 	};
 
-	struct Camera {
-		glm::mat4 model;
-		glm::mat4 view;
-		glm::mat4 proj;
+	struct Buffer {
+		vk::Buffer data;
+		vk::DeviceMemory memory;
+	};
+
+	struct Image {
+		vk::ImageView view;
+		vk::Image data;
+		vk::DeviceMemory memory;
+	};
+
+	struct Mesh {
+		uint32_t indexOffset;
+		uint32_t indexLength;
+		uint32_t vertexOffset;
+		uint32_t vertexLength;
+		uint32_t imageIndex;
+	};
+
+	struct Model {
+		uint32_t meshIndex;
+		uint32_t meshCount;
+	};
+
+	struct Prop {
+		uint32_t modelIndex;
+		uint32_t uniformIndex;
+		std::vector<vk::DescriptorSet> descriptors;
 	};
 }
