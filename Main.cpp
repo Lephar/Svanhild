@@ -16,6 +16,7 @@ vk::ShaderModule vertexShader, fragmentShader;
 vk::DescriptorSetLayout descriptorSetLayout;
 vk::PipelineLayout pipelineLayout;
 vk::Pipeline graphicsPipeline;
+vk::Sampler sampler;
 svh::Image depthImage, colorImage;
 std::vector<vk::Framebuffer> framebuffers;
 svh::Camera camera;
@@ -28,7 +29,8 @@ std::vector<svh::Model> models;
 std::vector<svh::Asset> assets;
 svh::Buffer indexBuffer, vertexBuffer;
 std::vector<svh::Buffer> cameraBuffers, modelBuffers;
-std::vector<vk::DescriptorSet> descriptors;
+vk::DescriptorPool descriptorPool;
+std::vector<vk::DescriptorSet> descriptorSets;
 
 #ifndef NDEBUG
 
@@ -234,9 +236,10 @@ svh::Details generateDetails() {
 		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e2;
 	else
 		temporaryDetails.sampleCount = vk::SampleCountFlagBits::e1;
-	temporaryDetails.sampleCount = vk::SampleCountFlagBits::e2;
 
 	temporaryDetails.mipLevels = 1;
+	temporaryDetails.maxAnisotropy = deviceProperties.limits.maxSamplerAnisotropy;
+	temporaryDetails.uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
 
 	return temporaryDetails;
 }
@@ -514,14 +517,22 @@ void createPipeline() {
 	cameraLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
 	cameraLayoutBinding.pImmutableSamplers = nullptr;
 
+	vk::DescriptorSetLayoutBinding modelLayoutBinding{};
+	modelLayoutBinding.binding = 1;
+	modelLayoutBinding.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+	modelLayoutBinding.descriptorCount = 1;
+	modelLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+	modelLayoutBinding.pImmutableSamplers = nullptr;
+
 	vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
-	samplerLayoutBinding.binding = 1;
+	samplerLayoutBinding.binding = 2;
 	samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
 	samplerLayoutBinding.descriptorCount = 1;
 	samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
 	samplerLayoutBinding.pImmutableSamplers = nullptr;
 
-	std::array<vk::DescriptorSetLayoutBinding, 2> bindings{cameraLayoutBinding, samplerLayoutBinding};
+	std::array<vk::DescriptorSetLayoutBinding, 3> bindings{
+			cameraLayoutBinding, modelLayoutBinding, samplerLayoutBinding};
 
 	vk::DescriptorSetLayoutCreateInfo descriptorInfo{};
 	descriptorInfo.bindingCount = bindings.size();
@@ -555,6 +566,27 @@ void createPipeline() {
 	pipelineInfo.basePipelineIndex = -1;
 
 	graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+}
+
+void createSampler() {
+	vk::SamplerCreateInfo samplerInfo{};
+	samplerInfo.magFilter = vk::Filter::eLinear;
+	samplerInfo.minFilter = vk::Filter::eLinear;
+	samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+	samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+	samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+	samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+	samplerInfo.unnormalizedCoordinates = VK_FALSE;
+	samplerInfo.compareEnable = VK_FALSE;
+	samplerInfo.compareOp = vk::CompareOp::eAlways;
+	samplerInfo.anisotropyEnable = VK_FALSE;
+	samplerInfo.maxAnisotropy = details.maxAnisotropy;
+	samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+	samplerInfo.mipLodBias = 0.0f;
+	samplerInfo.minLod = 0.0f;
+	samplerInfo.maxLod = 1.0f;
+
+	sampler = device.createSampler(samplerInfo);
 }
 
 uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
@@ -739,8 +771,7 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 	endSingleTimeCommand(commandBuffer);
 }
 
-void loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::SampleCountFlagBits samples, vk::Format format,
-			   std::vector<uint8_t> &data) {
+void loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t> &data) {
 	svh::Image image;
 	svh::Buffer buffer;
 
@@ -844,8 +875,7 @@ void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 tr
 			if (!value.first.compare("baseColorTexture")) {
 				auto &image = modelData.images.at(modelData.textures.at(value.second.TextureIndex()).source);
 				meshes.at(models.back().meshIndex + value.second.TextureTexCoord()).imageIndex = images.size();
-				loadImage(image.width, image.height, details.mipLevels, details.sampleCount, details.imageFormat,
-						  image.image);
+				loadImage(image.width, image.height, details.mipLevels, details.imageFormat, image.image);
 			}
 		}
 	}
@@ -902,6 +932,8 @@ void createScene() {
 	camera.pos = glm::vec4{0.0f, 1.0f, 1.0f, 1.0f};
 	camera.dir = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f};
 	camera.up = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f};
+
+	details.meshCount = meshes.size();
 }
 
 void createElementBuffers() {
@@ -935,7 +967,7 @@ void createElementBuffers() {
 	device.unmapMemory(stagingBuffer.memory);
 
 	createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.data, stagingBuffer.memory);
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.data, indexBuffer.memory);
 	copyBuffer(stagingBuffer.data, indexBuffer.data, indexBufferSize);
 
 	device.destroyBuffer(stagingBuffer.data);
@@ -958,21 +990,128 @@ void createElementBuffers() {
 					 cameraBuffer.data, cameraBuffer.memory);
 }
 
+void createDescriptorSets() {
+	details.descriptorCount = details.imageCount * details.meshCount;
+
+	vk::DescriptorPoolSize cameraSize;
+	cameraSize.type = vk::DescriptorType::eUniformBuffer;
+	cameraSize.descriptorCount = details.descriptorCount;
+
+	vk::DescriptorPoolSize modelSize;
+	modelSize.type = vk::DescriptorType::eUniformBufferDynamic;
+	modelSize.descriptorCount = details.descriptorCount;
+
+	vk::DescriptorPoolSize samplerSize;
+	samplerSize.type = vk::DescriptorType::eCombinedImageSampler;
+	samplerSize.descriptorCount = details.descriptorCount;
+
+	std::array<vk::DescriptorPoolSize, 3> poolSizes{cameraSize, modelSize, samplerSize};
+
+	vk::DescriptorPoolCreateInfo poolInfo{};
+	poolInfo.poolSizeCount = poolSizes.size();
+	poolInfo.pPoolSizes = poolSizes.data();
+	poolInfo.maxSets = details.descriptorCount;
+
+	descriptorPool = device.createDescriptorPool(poolInfo);
+
+	std::vector<vk::DescriptorSetLayout> layouts{details.descriptorCount, descriptorSetLayout};
+
+	vk::DescriptorSetAllocateInfo allocateInfo{};
+	allocateInfo.descriptorPool = descriptorPool;
+	allocateInfo.descriptorSetCount = details.descriptorCount;
+	allocateInfo.pSetLayouts = layouts.data();
+
+	descriptorSets = device.allocateDescriptorSets(allocateInfo);
+
+	for (uint32_t i = 0; i < details.imageCount; i++) {
+		for (uint32_t j = 0; j < details.meshCount; j++) {
+			vk::DescriptorBufferInfo cameraInfo{};
+			cameraInfo.buffer = cameraBuffers.at(i).data;
+			cameraInfo.offset = 0;
+			cameraInfo.range = sizeof(glm::mat4);
+
+			vk::DescriptorBufferInfo modelInfo{};
+			modelInfo.buffer = modelBuffers.at(i).data;
+			modelInfo.offset = std::max(sizeof(glm::mat4), details.uniformAlignment);
+			modelInfo.range = sizeof(glm::mat4);
+
+			vk::DescriptorImageInfo imageInfo{};
+			imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+			imageInfo.imageView = images.at(meshes.at(j).imageIndex).view;
+			imageInfo.sampler = sampler;
+
+			vk::WriteDescriptorSet cameraWrite{};
+			cameraWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			cameraWrite.dstBinding = 0;
+			cameraWrite.dstArrayElement = 0;
+			cameraWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+			cameraWrite.descriptorCount = 1;
+			cameraWrite.pBufferInfo = &cameraInfo;
+			cameraWrite.pImageInfo = nullptr;
+			cameraWrite.pTexelBufferView = nullptr;
+
+			vk::WriteDescriptorSet modelWrite{};
+			modelWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			modelWrite.dstBinding = 1;
+			modelWrite.dstArrayElement = 0;
+			modelWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+			modelWrite.descriptorCount = 1;
+			modelWrite.pBufferInfo = &modelInfo;
+			modelWrite.pImageInfo = nullptr;
+			modelWrite.pTexelBufferView = nullptr;
+
+			vk::WriteDescriptorSet imageWrite{};
+			imageWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			imageWrite.dstBinding = 2;
+			imageWrite.dstArrayElement = 0;
+			imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+			imageWrite.descriptorCount = 1;
+			imageWrite.pBufferInfo = nullptr;
+			imageWrite.pImageInfo = &imageInfo;
+			imageWrite.pTexelBufferView = nullptr;
+
+			std::array<vk::WriteDescriptorSet, 3> descriptorWrites{cameraWrite, modelWrite, imageWrite};
+
+			device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
+		}
+	}
+}
+
 void setup() {
 	initializeCore();
 	createDevice();
 	createSwapchain();
 	createRenderPass();
 	createPipeline();
+	createSampler();
 	createFramebuffers();
 	createScene();
 	createElementBuffers();
+	createDescriptorSets();
 }
 
 void draw() {
 }
 
 void clear() {
+	device.destroyDescriptorPool(descriptorPool);
+	for (auto &modelBuffer : modelBuffers) {
+		device.destroyBuffer(modelBuffer.data);
+		device.freeMemory(modelBuffer.memory);
+	}
+	for (auto &cameraBuffer : cameraBuffers) {
+		device.destroyBuffer(cameraBuffer.data);
+		device.freeMemory(cameraBuffer.memory);
+	}
+	device.destroyBuffer(vertexBuffer.data);
+	device.freeMemory(vertexBuffer.memory);
+	device.destroyBuffer(indexBuffer.data);
+	device.freeMemory(indexBuffer.memory);
+	for (auto &image : images) {
+		device.destroyImageView(image.view);
+		device.destroyImage(image.data);
+		device.freeMemory(image.memory);
+	}
 	for (auto &framebuffer : framebuffers)
 		device.destroyFramebuffer(framebuffer);
 	device.destroyImageView(colorImage.view);
@@ -981,6 +1120,7 @@ void clear() {
 	device.destroyImageView(depthImage.view);
 	device.destroyImage(depthImage.data);
 	device.freeMemory(depthImage.memory);
+	device.destroySampler(sampler);
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipelineLayout(pipelineLayout);
 	device.destroyDescriptorSetLayout(descriptorSetLayout);

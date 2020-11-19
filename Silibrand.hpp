@@ -28,15 +28,19 @@ namespace svh {
 	struct Details {
 		uint32_t currentImage;
 		uint32_t imageCount;
+		uint32_t meshCount;
+		uint32_t descriptorCount;
 		uint32_t matrixCount;
+		uint64_t uniformAlignment;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
 		vk::SurfaceFormatKHR surfaceFormat;
 		vk::PresentModeKHR presentMode;
 		vk::Format imageFormat;
-		uint32_t mipLevels;
 		vk::SampleCountFlagBits sampleCount;
+		uint32_t mipLevels;
+		float_t maxAnisotropy;
 	};
 
 	struct Vertex {
