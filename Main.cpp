@@ -31,6 +31,7 @@ svh::Buffer indexBuffer, vertexBuffer;
 std::vector<svh::Buffer> cameraBuffers, modelBuffers;
 vk::DescriptorPool descriptorPool;
 std::vector<vk::DescriptorSet> descriptorSets;
+std::vector<vk::CommandBuffer> commandBuffers;
 
 #ifndef NDEBUG
 
@@ -905,6 +906,7 @@ void loadModel(std::string filename) {
 
 	for (auto &nodeIndex : scene.nodes)
 		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{1.0f});
+	details.meshCount += models.back().meshCount;
 }
 
 void addAsset(uint32_t modelIndex, glm::mat4 modelMatrix = glm::mat4{1.0f}) {
@@ -932,8 +934,6 @@ void createScene() {
 	camera.pos = glm::vec4{0.0f, 1.0f, 1.0f, 1.0f};
 	camera.dir = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f};
 	camera.up = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f};
-
-	details.meshCount = meshes.size();
 }
 
 void createElementBuffers() {
@@ -973,7 +973,7 @@ void createElementBuffers() {
 	device.destroyBuffer(stagingBuffer.data);
 	device.freeMemory(stagingBuffer.memory);
 
-	auto modelSize = details.matrixCount * sizeof(glm::mat4);
+	auto modelSize = details.matrixCount * details.uniformAlignment;
 	modelBuffers.resize(details.imageCount);
 
 	for (auto &modelBuffer : modelBuffers)
@@ -981,7 +981,7 @@ void createElementBuffers() {
 					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
 					 modelBuffer.data, modelBuffer.memory);
 
-	auto cameraSize = 2 * sizeof(glm::mat4);
+	auto cameraSize = sizeof(glm::mat4);
 	cameraBuffers.resize(details.imageCount);
 
 	for (auto &cameraBuffer : cameraBuffers)
@@ -1032,8 +1032,8 @@ void createDescriptorSets() {
 
 			vk::DescriptorBufferInfo modelInfo{};
 			modelInfo.buffer = modelBuffers.at(i).data;
-			modelInfo.offset = std::max(sizeof(glm::mat4), details.uniformAlignment);
-			modelInfo.range = sizeof(glm::mat4);
+			modelInfo.offset = 0;
+			modelInfo.range = details.uniformAlignment;;
 
 			vk::DescriptorImageInfo imageInfo{};
 			imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
@@ -1077,6 +1077,63 @@ void createDescriptorSets() {
 	}
 }
 
+void createCommandBuffers() {
+	vk::CommandBufferAllocateInfo allocateInfo{};
+	allocateInfo.commandPool = commandPool;
+	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
+	allocateInfo.commandBufferCount = details.imageCount;
+
+	commandBuffers = device.allocateCommandBuffers(allocateInfo);
+
+	for (uint32_t i = 0; i < details.imageCount; i++) {
+		vk::CommandBufferBeginInfo beginInfo{};
+		beginInfo.pInheritanceInfo = nullptr;
+
+		std::array<vk::ClearValue, 2> clearValues{};
+		clearValues.at(0).color.float32.at(0) = 0.0f;
+		clearValues.at(0).color.float32.at(1) = 0.0f;
+		clearValues.at(0).color.float32.at(2) = 0.0f;
+		clearValues.at(0).color.float32.at(3) = 1.0f;
+		clearValues.at(1).depthStencil.depth = 1.0f;
+		clearValues.at(1).depthStencil.stencil = 0;
+
+		vk::Offset2D offset;
+		offset.x = 0;
+		offset.y = 0;
+
+		vk::RenderPassBeginInfo renderPassInfo{};
+		renderPassInfo.renderPass = renderPass;
+		renderPassInfo.framebuffer = framebuffers.at(i);
+		renderPassInfo.renderArea.offset = offset;
+		renderPassInfo.renderArea.extent = details.swapchainExtent;
+		renderPassInfo.clearValueCount = clearValues.size();
+		renderPassInfo.pClearValues = clearValues.data();
+
+		vk::DeviceSize bufferOffset = 0;
+
+		commandBuffers.at(i).begin(beginInfo);
+		commandBuffers.at(i).beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+		commandBuffers.at(i).bindVertexBuffers(0, 1, &vertexBuffer.data, &bufferOffset);
+		commandBuffers.at(i).bindIndexBuffer(indexBuffer.data, 0, vk::IndexType::eUint16);
+		commandBuffers.at(i).bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+
+		for (auto &asset : assets) {
+			auto &model = models.at(asset.modelIndex);
+			for (uint32_t j = 0; j < model.meshCount; j++) {
+				auto mesh = meshes.at(j + model.meshIndex);
+				auto dynamicOffset = (j + asset.uniformIndex) * details.uniformAlignment;
+				commandBuffers.at(i).bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
+														&descriptorSets.at(i * details.meshCount + j + model.meshIndex),
+														1, &dynamicOffset);
+				commandBuffers.at(i).drawIndexed(mesh.indexLength, 1, mesh.indexOffset, 0, 0);
+			}
+		}
+
+		commandBuffers.at(i).endRenderPass();
+		commandBuffers.at(i).end();
+	}
+}
+
 void setup() {
 	initializeCore();
 	createDevice();
@@ -1088,6 +1145,7 @@ void setup() {
 	createScene();
 	createElementBuffers();
 	createDescriptorSets();
+	createCommandBuffers();
 }
 
 void draw() {

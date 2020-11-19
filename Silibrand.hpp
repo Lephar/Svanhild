@@ -31,7 +31,7 @@ namespace svh {
 		uint32_t meshCount;
 		uint32_t descriptorCount;
 		uint32_t matrixCount;
-		uint64_t uniformAlignment;
+		uint32_t uniformAlignment;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
