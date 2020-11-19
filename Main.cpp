@@ -18,14 +18,17 @@ vk::PipelineLayout pipelineLayout;
 vk::Pipeline graphicsPipeline;
 svh::Image depthImage, colorImage;
 std::vector<vk::Framebuffer> framebuffers;
-vk::Sampler sampler;
-
-
+svh::Camera camera;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
+std::vector<glm::mat4> transforms;
 std::vector<svh::Image> images;
 std::vector<svh::Mesh> meshes;
 std::vector<svh::Model> models;
+std::vector<svh::Asset> assets;
+svh::Buffer indexBuffer, vertexBuffer;
+std::vector<svh::Buffer> cameraBuffers, modelBuffers;
+std::vector<vk::DescriptorSet> descriptors;
 
 #ifndef NDEBUG
 
@@ -175,9 +178,11 @@ svh::Details generateDetails() {
 														std::min(surfaceCapabilities.maxImageExtent.height,
 																 surfaceCapabilities.currentExtent.height));
 
+	temporaryDetails.currentImage = 0;
+	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
+	temporaryDetails.matrixCount = 0;
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
 	temporaryDetails.swapchainTransform = surfaceCapabilities.currentTransform;
-	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
 
 	temporaryDetails.depthStencilFormat = vk::Format::eD32Sfloat;
 	auto formatProperties = physicalDevice.getFormatProperties(vk::Format::eD32SfloatS8Uint);
@@ -766,13 +771,17 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 		svh::Mesh mesh;
 		mesh.indexOffset = indices.size();
 		mesh.vertexOffset = vertices.size();
+		mesh.transformIndex = transforms.size();
 
-		auto &indexView = modelData.bufferViews.at(primitive.indices);
-		auto &indexBuffer = modelData.buffers.at(indexView.buffer);
+		models.back().meshCount++;
+		transforms.push_back(transform);
 
-		mesh.indexLength = indexView.byteLength / sizeof(uint16_t);
-		indices.insert(indices.end(), indexBuffer.data.begin() + indexView.byteOffset,
-					   indexBuffer.data.begin() + indexView.byteOffset + indexView.byteLength);
+		auto &indexReference = modelData.bufferViews.at(primitive.indices);
+		auto &indexData = modelData.buffers.at(indexReference.buffer);
+
+		mesh.indexLength = indexReference.byteLength / sizeof(uint16_t);
+		indices.insert(indices.end(), indexData.data.begin() + indexReference.byteOffset,
+					   indexData.data.begin() + indexReference.byteOffset + indexReference.byteLength);
 
 		std::vector<glm::vec3> positions;
 		std::vector<glm::vec3> normals;
@@ -803,8 +812,8 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 
 		for (int index = 0; index < mesh.vertexLength; index++) {
 			svh::Vertex vertex;
-			vertex.pos = transform * glm::vec4{positions.at(index), 1.0f};
-			vertex.nor = transform * glm::vec4{positions.at(index), 0.0f};
+			vertex.pos = glm::vec4{positions.at(index), 1.0f};
+			vertex.nor = glm::vec4{positions.at(index), 0.0f};
 			vertex.tex = positions.at(index);
 			vertices.push_back(vertex);
 		}
@@ -868,6 +877,87 @@ void loadModel(std::string filename) {
 		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{1.0f});
 }
 
+void addAsset(uint32_t modelIndex, glm::mat4 modelMatrix = glm::mat4{1.0f}) {
+	svh::Asset asset{};
+	asset.modelIndex = modelIndex;
+	asset.transformIndex = transforms.size();
+	asset.uniformIndex = details.matrixCount;
+
+	assets.push_back(asset);
+	transforms.push_back(modelMatrix);
+	details.matrixCount += models.at(assets.back().modelIndex).meshCount;
+}
+
+void createScene() {
+	loadModel("models/Cube.glb");
+	loadModel("models/Sphere.glb");
+	loadModel("models/Monkey.glb");
+
+	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{2.0f, 0.0f, 0.0f}));
+	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{-2.0f, 0.0f, 0.0f}));
+	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, 2.0f, 0.0f}));
+	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, -2.0f, 0.0f}));
+	addAsset(2);
+
+	camera.pos = glm::vec4{0.0f, 1.0f, 1.0f, 1.0f};
+	camera.dir = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f};
+	camera.up = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f};
+}
+
+void createElementBuffers() {
+	svh::Buffer stagingBuffer;
+
+	auto vertexBufferSize = vertices.size() * sizeof(svh::Vertex);
+
+	createBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+				 stagingBuffer.data, stagingBuffer.memory);
+
+	auto vertexData = device.mapMemory(stagingBuffer.memory, 0, vertexBufferSize);
+	std::memcpy(vertexData, vertices.data(), vertexBufferSize);
+	device.unmapMemory(stagingBuffer.memory);
+
+	createBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.data, vertexBuffer.memory);
+	copyBuffer(stagingBuffer.data, vertexBuffer.data, vertexBufferSize);
+
+	device.destroyBuffer(stagingBuffer.data);
+	device.freeMemory(stagingBuffer.memory);
+
+	auto indexBufferSize = indices.size() * sizeof(uint16_t);
+
+	createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+				 stagingBuffer.data, stagingBuffer.memory);
+
+	auto indexData = device.mapMemory(stagingBuffer.memory, 0, indexBufferSize);
+	std::memcpy(indexData, indices.data(), indexBufferSize);
+	device.unmapMemory(stagingBuffer.memory);
+
+	createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.data, stagingBuffer.memory);
+	copyBuffer(stagingBuffer.data, indexBuffer.data, indexBufferSize);
+
+	device.destroyBuffer(stagingBuffer.data);
+	device.freeMemory(stagingBuffer.memory);
+
+	auto modelSize = details.matrixCount * sizeof(glm::mat4);
+	modelBuffers.resize(details.imageCount);
+
+	for (auto &modelBuffer : modelBuffers)
+		createBuffer(modelSize, vk::BufferUsageFlagBits::eUniformBuffer,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+					 modelBuffer.data, modelBuffer.memory);
+
+	auto cameraSize = 2 * sizeof(glm::mat4);
+	cameraBuffers.resize(details.imageCount);
+
+	for (auto &cameraBuffer : cameraBuffers)
+		createBuffer(cameraSize, vk::BufferUsageFlagBits::eUniformBuffer,
+					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+					 cameraBuffer.data, cameraBuffer.memory);
+}
+
 void setup() {
 	initializeCore();
 	createDevice();
@@ -875,14 +965,14 @@ void setup() {
 	createRenderPass();
 	createPipeline();
 	createFramebuffers();
+	createScene();
+	createElementBuffers();
 }
 
 void draw() {
 }
 
 void clear() {
-	device.destroySampler(sampler);
-
 	for (auto &framebuffer : framebuffers)
 		device.destroyFramebuffer(framebuffer);
 	device.destroyImageView(colorImage.view);

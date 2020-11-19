@@ -19,14 +19,16 @@
 
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
-#include <tinygltf/tiny_gltf.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <tinygltf/tiny_gltf.h>
 
 namespace svh {
 	struct Details {
+		uint32_t currentImage;
 		uint32_t imageCount;
+		uint32_t matrixCount;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
@@ -41,6 +43,12 @@ namespace svh {
 		glm::vec4 pos;
 		glm::vec4 nor;
 		glm::vec2 tex;
+	};
+
+	struct Camera {
+		glm::vec4 pos;
+		glm::vec4 dir;
+		glm::vec4 up;
 	};
 
 	struct Buffer {
@@ -59,6 +67,7 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
+		uint32_t transformIndex;
 		uint32_t imageIndex;
 	};
 
@@ -67,9 +76,9 @@ namespace svh {
 		uint32_t meshCount;
 	};
 
-	struct Prop {
+	struct Asset {
 		uint32_t modelIndex;
+		uint32_t transformIndex;
 		uint32_t uniformIndex;
-		std::vector<vk::DescriptorSet> descriptors;
 	};
 }
