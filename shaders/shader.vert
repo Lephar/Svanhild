@@ -1,8 +1,8 @@
 #version 460 core
 #extension GL_ARB_separate_shader_objects: enable
 
-layout(binding = 0) uniform Model {
-    mat4 model;
+layout(binding = 0) uniform Transform {
+    mat4 transform;
 };
 
 layout(binding = 1) uniform Camera {
@@ -19,8 +19,8 @@ layout(location = 2) out vec2 outputTexture;
 
 void main()
 {
-    outputPosition = vec3(model * vec4(inputPosition, 1.0f));
-    outputNormal = normalize(vec3(model * vec4(inputNormal, 0.0f)));
+    outputPosition = vec3(transform * vec4(inputPosition, 1.0f));
+    outputNormal = normalize(vec3(transform * vec4(inputNormal, 0.0f)));
     outputTexture = inputTexture;
 
     gl_Position = camera * vec4(outputPosition, 1.0f);

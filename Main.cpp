@@ -1,6 +1,8 @@
 #include "Silibrand.hpp"
 
 GLFWwindow *window;
+svh::Controls controls;
+svh::State state;
 vk::Instance instance;
 vk::SurfaceKHR surface;
 vk::PhysicalDevice physicalDevice;
@@ -22,16 +24,16 @@ std::vector<vk::Framebuffer> framebuffers;
 svh::Camera camera;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
-std::vector<glm::mat4> transforms;
-std::vector<svh::Image> images;
 std::vector<svh::Mesh> meshes;
 std::vector<svh::Model> models;
 std::vector<svh::Asset> assets;
 svh::Buffer indexBuffer, vertexBuffer;
-std::vector<svh::Buffer> cameraBuffers, modelBuffers;
+std::vector<svh::Buffer> cameraBuffers, transformBuffers;
 vk::DescriptorPool descriptorPool;
 std::vector<vk::DescriptorSet> descriptorSets;
 std::vector<vk::CommandBuffer> commandBuffers;
+std::vector<vk::Fence> frameFences, orderFences;
+std::vector<vk::Semaphore> availableSemaphores, finishedSemaphores;
 
 #ifndef NDEBUG
 
@@ -53,13 +55,61 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 
 #endif
 
+void mouseCallback(GLFWwindow *handle, double x, double y) {
+	static_cast<void>(handle);
+
+	controls.mouseX = x;
+	controls.mouseY = y;
+}
+
+void keyboardCallback(GLFWwindow *handle, int key, int scancode, int action, int mods) {
+	static_cast<void>(handle);
+	static_cast<void>(scancode);
+	static_cast<void>(mods);
+
+	if (action == GLFW_RELEASE) {
+		if (key == GLFW_KEY_W)
+			controls.keyW = 0;
+		else if (key == GLFW_KEY_S)
+			controls.keyS = 0;
+		else if (key == GLFW_KEY_A)
+			controls.keyA = 0;
+		else if (key == GLFW_KEY_D)
+			controls.keyD = 0;
+		else if (key == GLFW_KEY_Q)
+			controls.keyQ = 0;
+		else if (key == GLFW_KEY_E)
+			controls.keyE = 0;
+		else if (key == GLFW_KEY_R)
+			controls.keyR = 0;
+		else if (key == GLFW_KEY_F)
+			controls.keyF = 0;
+	} else if (action == GLFW_PRESS) {
+		if (key == GLFW_KEY_W)
+			controls.keyW = 1;
+		else if (key == GLFW_KEY_S)
+			controls.keyS = 1;
+		else if (key == GLFW_KEY_A)
+			controls.keyA = 1;
+		else if (key == GLFW_KEY_D)
+			controls.keyD = 1;
+		else if (key == GLFW_KEY_Q)
+			controls.keyQ = 1;
+		else if (key == GLFW_KEY_E)
+			controls.keyE = 1;
+		else if (key == GLFW_KEY_R)
+			controls.keyR = 1;
+		else if (key == GLFW_KEY_F)
+			controls.keyF = 1;
+	}
+}
+
 void initializeCore() {
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
-	//glfwGetCursorPos(window, &mouseX, &mouseY);
-	//glfwSetKeyCallback(window, keyboardCallback);
-	//glfwSetCursorPosCallback(window, mouseCallback);
+	glfwSetCursorPosCallback(window, mouseCallback);
+	glfwSetKeyCallback(window, keyboardCallback);
 
 	uint32_t extensionCount = 0;
 	auto **extensionNames = glfwGetRequiredInstanceExtensions(&extensionCount);
@@ -181,7 +231,6 @@ svh::Details generateDetails() {
 														std::min(surfaceCapabilities.maxImageExtent.height,
 																 surfaceCapabilities.currentExtent.height));
 
-	temporaryDetails.currentImage = 0;
 	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
 	temporaryDetails.matrixCount = 0;
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
@@ -240,7 +289,10 @@ svh::Details generateDetails() {
 
 	temporaryDetails.mipLevels = 1;
 	temporaryDetails.maxAnisotropy = deviceProperties.limits.maxSamplerAnisotropy;
+
 	temporaryDetails.uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
+	while (temporaryDetails.uniformAlignment < sizeof(glm::mat4))
+		temporaryDetails.uniformAlignment += deviceProperties.limits.minUniformBufferOffsetAlignment;
 
 	return temporaryDetails;
 }
@@ -511,19 +563,19 @@ void createPipeline() {
 	blendInfo.pAttachments = &blendAttachment;
 	blendInfo.blendConstants = blendConstants;
 
-	vk::DescriptorSetLayoutBinding cameraLayoutBinding{};
-	cameraLayoutBinding.binding = 0;
-	cameraLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-	cameraLayoutBinding.descriptorCount = 1;
-	cameraLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
-	cameraLayoutBinding.pImmutableSamplers = nullptr;
-
 	vk::DescriptorSetLayoutBinding modelLayoutBinding{};
-	modelLayoutBinding.binding = 1;
+	modelLayoutBinding.binding = 0;
 	modelLayoutBinding.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
 	modelLayoutBinding.descriptorCount = 1;
 	modelLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
 	modelLayoutBinding.pImmutableSamplers = nullptr;
+
+	vk::DescriptorSetLayoutBinding cameraLayoutBinding{};
+	cameraLayoutBinding.binding = 1;
+	cameraLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+	cameraLayoutBinding.descriptorCount = 1;
+	cameraLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+	cameraLayoutBinding.pImmutableSamplers = nullptr;
 
 	vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
 	samplerLayoutBinding.binding = 2;
@@ -533,7 +585,7 @@ void createPipeline() {
 	samplerLayoutBinding.pImmutableSamplers = nullptr;
 
 	std::array<vk::DescriptorSetLayoutBinding, 3> bindings{
-			cameraLayoutBinding, modelLayoutBinding, samplerLayoutBinding};
+			modelLayoutBinding, cameraLayoutBinding, samplerLayoutBinding};
 
 	vk::DescriptorSetLayoutCreateInfo descriptorInfo{};
 	descriptorInfo.bindingCount = bindings.size();
@@ -772,7 +824,8 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 	endSingleTimeCommand(commandBuffer);
 }
 
-void loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t> &data) {
+//TODO: Use continuous memory for images
+svh::Image loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t> &data) {
 	svh::Image image;
 	svh::Buffer buffer;
 
@@ -792,28 +845,33 @@ void loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::Format form
 	transitionImageLayout(image.data, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
 						  levels);
 	image.view = createImageView(image.data, format, vk::ImageAspectFlagBits::eColor, levels);
-	images.push_back(image);
 
 	device.destroyBuffer(buffer.data);
 	device.freeMemory(buffer.memory);
+
+	return image;
 }
 
 void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 transform) {
+	auto primitiveOrder = meshData.primitives.size();
+
 	for (auto &primitive : meshData.primitives) {
-		svh::Mesh mesh;
+		svh::Mesh mesh{};
+		mesh.primitiveOrder = primitiveOrder;
 		mesh.indexOffset = indices.size();
 		mesh.vertexOffset = vertices.size();
-		mesh.transformIndex = transforms.size();
+		mesh.transform = transform;
 
+		primitiveOrder--;
 		models.back().meshCount++;
-		transforms.push_back(transform);
 
 		auto &indexReference = modelData.bufferViews.at(primitive.indices);
 		auto &indexData = modelData.buffers.at(indexReference.buffer);
 
 		mesh.indexLength = indexReference.byteLength / sizeof(uint16_t);
-		indices.insert(indices.end(), indexData.data.begin() + indexReference.byteOffset,
-					   indexData.data.begin() + indexReference.byteOffset + indexReference.byteLength);
+		indices.resize(mesh.indexOffset + mesh.indexLength);
+		std::memcpy(indices.data() + mesh.indexOffset, indexData.data.data() + indexReference.byteOffset,
+					indexReference.byteLength);
 
 		std::vector<glm::vec3> positions;
 		std::vector<glm::vec3> normals;
@@ -843,10 +901,10 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 		meshes.push_back(mesh);
 
 		for (int index = 0; index < mesh.vertexLength; index++) {
-			svh::Vertex vertex;
-			vertex.pos = glm::vec4{positions.at(index), 1.0f};
-			vertex.nor = glm::vec4{positions.at(index), 0.0f};
-			vertex.tex = positions.at(index);
+			svh::Vertex vertex{};
+			vertex.pos = positions.at(index);
+			vertex.nor = normals.at(index);
+			vertex.tex = texcoords.at(index);
 			vertices.push_back(vertex);
 		}
 	}
@@ -875,8 +933,11 @@ void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 tr
 		for (auto &value : material.values) {
 			if (!value.first.compare("baseColorTexture")) {
 				auto &image = modelData.images.at(modelData.textures.at(value.second.TextureIndex()).source);
-				meshes.at(models.back().meshIndex + value.second.TextureTexCoord()).imageIndex = images.size();
-				loadImage(image.width, image.height, details.mipLevels, details.imageFormat, image.image);
+				auto meshIndex = models.back().meshIndex + value.second.TextureTexCoord();
+
+				for (uint32_t index = meshIndex; index < meshIndex + meshes.at(meshIndex).primitiveOrder; index++)
+					meshes.at(index).texture = loadImage(image.width, image.height, details.mipLevels,
+														 details.imageFormat, image.image);
 			}
 		}
 	}
@@ -909,74 +970,74 @@ void loadModel(std::string filename) {
 	details.meshCount += models.back().meshCount;
 }
 
-void addAsset(uint32_t modelIndex, glm::mat4 modelMatrix = glm::mat4{1.0f}) {
+void addAsset(uint32_t model, glm::mat4 transform = glm::mat4{1.0f}) {
 	svh::Asset asset{};
-	asset.modelIndex = modelIndex;
-	asset.transformIndex = transforms.size();
+	asset.modelIndex = model;
+	asset.transform = transform;
 	asset.uniformIndex = details.matrixCount;
-
 	assets.push_back(asset);
-	transforms.push_back(modelMatrix);
-	details.matrixCount += models.at(assets.back().modelIndex).meshCount;
+	details.matrixCount += models.at(model).meshCount;
 }
 
 void createScene() {
+	camera.pos = glm::vec4{0.0f, 1.0f, 1.0f, 1.0f};
+	camera.dir = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f};
+	camera.up = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f};
+
 	loadModel("models/Cube.glb");
 	loadModel("models/Sphere.glb");
 	loadModel("models/Monkey.glb");
 
-	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{2.0f, 0.0f, 0.0f}));
-	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{-2.0f, 0.0f, 0.0f}));
-	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, 2.0f, 0.0f}));
-	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, -2.0f, 0.0f}));
-	addAsset(2);
-
-	camera.pos = glm::vec4{0.0f, 1.0f, 1.0f, 1.0f};
-	camera.dir = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f};
-	camera.up = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f};
+	addAsset(0);
+	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{4.0f, 0.0f, 0.0f}));
+	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{-4.0f, 0.0f, 0.0f}));
+	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, 4.0f, 0.0f}));
+	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, -4.0f, 0.0f}));
+	addAsset(2, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, 0.0f, 3.0f}) *
+		  glm::rotate(glm::radians(180.0f), glm::vec3{0.0f, 0.0f, 1.0f}));
 }
 
 void createElementBuffers() {
 	svh::Buffer stagingBuffer;
 
-	auto vertexBufferSize = vertices.size() * sizeof(svh::Vertex);
+	auto indexSize = indices.size() * sizeof(uint16_t);
 
-	createBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferSrc,
 				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
 				 stagingBuffer.data, stagingBuffer.memory);
 
-	auto vertexData = device.mapMemory(stagingBuffer.memory, 0, vertexBufferSize);
-	std::memcpy(vertexData, vertices.data(), vertexBufferSize);
+	auto indexData = device.mapMemory(stagingBuffer.memory, 0, indexSize);
+	std::memcpy(indexData, indices.data(), indexSize);
 	device.unmapMemory(stagingBuffer.memory);
 
-	createBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.data, vertexBuffer.memory);
-	copyBuffer(stagingBuffer.data, vertexBuffer.data, vertexBufferSize);
+	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.data, indexBuffer.memory);
+	copyBuffer(stagingBuffer.data, indexBuffer.data, indexSize);
 
 	device.destroyBuffer(stagingBuffer.data);
 	device.freeMemory(stagingBuffer.memory);
 
-	auto indexBufferSize = indices.size() * sizeof(uint16_t);
+	auto vertexSize = vertices.size() * sizeof(svh::Vertex);
 
-	createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferSrc,
 				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
 				 stagingBuffer.data, stagingBuffer.memory);
 
-	auto indexData = device.mapMemory(stagingBuffer.memory, 0, indexBufferSize);
-	std::memcpy(indexData, indices.data(), indexBufferSize);
+	auto vertexData = device.mapMemory(stagingBuffer.memory, 0, vertexSize);
+	std::memcpy(vertexData, vertices.data(), vertexSize);
 	device.unmapMemory(stagingBuffer.memory);
 
-	createBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.data, indexBuffer.memory);
-	copyBuffer(stagingBuffer.data, indexBuffer.data, indexBufferSize);
+	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.data, vertexBuffer.memory);
+	copyBuffer(stagingBuffer.data, vertexBuffer.data, vertexSize);
 
 	device.destroyBuffer(stagingBuffer.data);
 	device.freeMemory(stagingBuffer.memory);
 
 	auto modelSize = details.matrixCount * details.uniformAlignment;
-	modelBuffers.resize(details.imageCount);
+	transformBuffers.resize(details.imageCount);
 
-	for (auto &modelBuffer : modelBuffers)
+	for (auto &modelBuffer : transformBuffers)
 		createBuffer(modelSize, vk::BufferUsageFlagBits::eUniformBuffer,
 					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
 					 modelBuffer.data, modelBuffer.memory);
@@ -990,69 +1051,60 @@ void createElementBuffers() {
 					 cameraBuffer.data, cameraBuffer.memory);
 }
 
+//TODO: Combine model-view and projection matrices in same buffer
 void createDescriptorSets() {
-	details.descriptorCount = details.imageCount * details.meshCount;
+	auto descriptorCount = details.imageCount * details.meshCount;
 
-	vk::DescriptorPoolSize cameraSize;
-	cameraSize.type = vk::DescriptorType::eUniformBuffer;
-	cameraSize.descriptorCount = details.descriptorCount;
-
-	vk::DescriptorPoolSize modelSize;
+	vk::DescriptorPoolSize modelSize{};
 	modelSize.type = vk::DescriptorType::eUniformBufferDynamic;
-	modelSize.descriptorCount = details.descriptorCount;
+	modelSize.descriptorCount = descriptorCount;
 
-	vk::DescriptorPoolSize samplerSize;
+	vk::DescriptorPoolSize cameraSize{};
+	cameraSize.type = vk::DescriptorType::eUniformBuffer;
+	cameraSize.descriptorCount = descriptorCount;
+
+	vk::DescriptorPoolSize samplerSize{};
 	samplerSize.type = vk::DescriptorType::eCombinedImageSampler;
-	samplerSize.descriptorCount = details.descriptorCount;
+	samplerSize.descriptorCount = descriptorCount;
 
-	std::array<vk::DescriptorPoolSize, 3> poolSizes{cameraSize, modelSize, samplerSize};
+	std::array<vk::DescriptorPoolSize, 3> poolSizes{modelSize, cameraSize, samplerSize};
 
 	vk::DescriptorPoolCreateInfo poolInfo{};
 	poolInfo.poolSizeCount = poolSizes.size();
 	poolInfo.pPoolSizes = poolSizes.data();
-	poolInfo.maxSets = details.descriptorCount;
+	poolInfo.maxSets = descriptorCount;
 
 	descriptorPool = device.createDescriptorPool(poolInfo);
 
-	std::vector<vk::DescriptorSetLayout> layouts{details.descriptorCount, descriptorSetLayout};
+	std::vector<vk::DescriptorSetLayout> layouts{descriptorCount, descriptorSetLayout};
 
 	vk::DescriptorSetAllocateInfo allocateInfo{};
 	allocateInfo.descriptorPool = descriptorPool;
-	allocateInfo.descriptorSetCount = details.descriptorCount;
+	allocateInfo.descriptorSetCount = descriptorCount;
 	allocateInfo.pSetLayouts = layouts.data();
 
 	descriptorSets = device.allocateDescriptorSets(allocateInfo);
 
 	for (uint32_t i = 0; i < details.imageCount; i++) {
 		for (uint32_t j = 0; j < details.meshCount; j++) {
+			vk::DescriptorBufferInfo modelInfo{};
+			modelInfo.buffer = transformBuffers.at(i).data;
+			modelInfo.offset = 0;
+			modelInfo.range = details.uniformAlignment;
+
 			vk::DescriptorBufferInfo cameraInfo{};
 			cameraInfo.buffer = cameraBuffers.at(i).data;
 			cameraInfo.offset = 0;
 			cameraInfo.range = sizeof(glm::mat4);
 
-			vk::DescriptorBufferInfo modelInfo{};
-			modelInfo.buffer = modelBuffers.at(i).data;
-			modelInfo.offset = 0;
-			modelInfo.range = details.uniformAlignment;;
-
-			vk::DescriptorImageInfo imageInfo{};
-			imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-			imageInfo.imageView = images.at(meshes.at(j).imageIndex).view;
-			imageInfo.sampler = sampler;
-
-			vk::WriteDescriptorSet cameraWrite{};
-			cameraWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
-			cameraWrite.dstBinding = 0;
-			cameraWrite.dstArrayElement = 0;
-			cameraWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-			cameraWrite.descriptorCount = 1;
-			cameraWrite.pBufferInfo = &cameraInfo;
-			cameraWrite.pImageInfo = nullptr;
-			cameraWrite.pTexelBufferView = nullptr;
+			vk::DescriptorImageInfo samplerInfo{};
+			samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+			samplerInfo.imageView = meshes.at(j).texture.view;
+			samplerInfo.sampler = sampler;
 
 			vk::WriteDescriptorSet modelWrite{};
 			modelWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
-			modelWrite.dstBinding = 1;
+			modelWrite.dstBinding = 0;
 			modelWrite.dstArrayElement = 0;
 			modelWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
 			modelWrite.descriptorCount = 1;
@@ -1060,23 +1112,34 @@ void createDescriptorSets() {
 			modelWrite.pImageInfo = nullptr;
 			modelWrite.pTexelBufferView = nullptr;
 
-			vk::WriteDescriptorSet imageWrite{};
-			imageWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
-			imageWrite.dstBinding = 2;
-			imageWrite.dstArrayElement = 0;
-			imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-			imageWrite.descriptorCount = 1;
-			imageWrite.pBufferInfo = nullptr;
-			imageWrite.pImageInfo = &imageInfo;
-			imageWrite.pTexelBufferView = nullptr;
+			vk::WriteDescriptorSet cameraWrite{};
+			cameraWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			cameraWrite.dstBinding = 1;
+			cameraWrite.dstArrayElement = 0;
+			cameraWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+			cameraWrite.descriptorCount = 1;
+			cameraWrite.pBufferInfo = &cameraInfo;
+			cameraWrite.pImageInfo = nullptr;
+			cameraWrite.pTexelBufferView = nullptr;
 
-			std::array<vk::WriteDescriptorSet, 3> descriptorWrites{cameraWrite, modelWrite, imageWrite};
+			vk::WriteDescriptorSet samplerWrite{};
+			samplerWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			samplerWrite.dstBinding = 2;
+			samplerWrite.dstArrayElement = 0;
+			samplerWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+			samplerWrite.descriptorCount = 1;
+			samplerWrite.pBufferInfo = nullptr;
+			samplerWrite.pImageInfo = &samplerInfo;
+			samplerWrite.pTexelBufferView = nullptr;
+
+			std::array<vk::WriteDescriptorSet, 3> descriptorWrites{cameraWrite, modelWrite, samplerWrite};
 
 			device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
 		}
 	}
 }
 
+//TODO: Implement a index function
 void createCommandBuffers() {
 	vk::CommandBufferAllocateInfo allocateInfo{};
 	allocateInfo.commandPool = commandPool;
@@ -1125,12 +1188,26 @@ void createCommandBuffers() {
 				commandBuffers.at(i).bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
 														&descriptorSets.at(i * details.meshCount + j + model.meshIndex),
 														1, &dynamicOffset);
-				commandBuffers.at(i).drawIndexed(mesh.indexLength, 1, mesh.indexOffset, 0, 0);
+				commandBuffers.at(i).drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 			}
 		}
 
 		commandBuffers.at(i).endRenderPass();
 		commandBuffers.at(i).end();
+	}
+}
+
+void createSyncObject() {
+	vk::FenceCreateInfo fenceInfo{};
+	fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+
+	vk::SemaphoreCreateInfo semaphoreInfo{};
+
+	for (uint32_t i = 0; i < details.imageCount; i++) {
+		frameFences.push_back(device.createFence(fenceInfo));
+		orderFences.push_back(nullptr);
+		availableSemaphores.push_back(device.createSemaphore(semaphoreInfo));
+		finishedSemaphores.push_back(device.createSemaphore(semaphoreInfo));
 	}
 }
 
@@ -1146,14 +1223,137 @@ void setup() {
 	createElementBuffers();
 	createDescriptorSets();
 	createCommandBuffers();
+	createSyncObject();
 }
 
+//TODO: Remove constant memory map-unmaps
+void updateScene(uint32_t imageIndex) {
+	float_t delta = state.timeDelta * 4.0f;
+	int8_t vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
+	auto left = glm::normalize(glm::cross(camera.up, camera.dir));
+
+	if (vectorCount > 0)
+		state.timeDelta /= std::sqrt(vectorCount);
+	if (controls.keyW || controls.keyS)
+		camera.pos += (controls.keyW - controls.keyS) * delta * (camera.dir + camera.up) / std::sqrt(2.0f);
+	if (controls.keyA || controls.keyD)
+		camera.pos += (controls.keyA - controls.keyD) * delta * left;
+	if (controls.keyR || controls.keyF)
+		camera.pos += (controls.keyR - controls.keyF) * delta * camera.dir;
+	if (controls.keyQ || controls.keyE) {
+		glm::mat4 rotation = glm::rotate((controls.keyQ - controls.keyE) * delta / 2.0f, glm::vec3{0.0f, 0.0f, 1.0f});
+
+		auto direction = glm::normalize(glm::vec2{camera.dir});
+		camera.pos += camera.pos.z * glm::vec3{direction, 0.0f};
+		camera.dir = rotation * glm::vec4{camera.dir, 0.0f};
+
+		direction = glm::normalize(glm::vec2{camera.dir});
+		camera.pos -= camera.pos.z * glm::vec3{direction, 0.0f};
+		camera.up = rotation * glm::vec4{camera.up, 0.0f};
+	}
+
+	auto view = glm::lookAt(camera.pos, camera.pos + camera.dir, camera.up);
+	auto proj = glm::perspective(glm::radians(45.0f),
+								 static_cast<float_t>(details.swapchainExtent.width) /
+								 static_cast<float_t>(details.swapchainExtent.height), 0.01f, 100.0f);
+	proj[1][1] *= -1;
+	auto transform = proj * view;
+
+	auto data = device.mapMemory(cameraBuffers.at(imageIndex).memory, 0, sizeof(glm::mat4));
+	std::memcpy(data, &transform, sizeof(glm::mat4));
+	device.unmapMemory(cameraBuffers.at(imageIndex).memory);
+
+	for (auto &asset : assets) {
+		auto &model = models.at(asset.modelIndex);
+
+		for (int i = model.meshIndex; i < model.meshIndex + model.meshCount; i++) {
+			auto &mesh = meshes.at(i);
+			transform = asset.transform * mesh.transform;
+
+			data = device.mapMemory(transformBuffers.at(imageIndex).memory,
+									asset.uniformIndex * details.uniformAlignment, sizeof(glm::mat4));
+			std::memcpy(data, &transform, sizeof(glm::mat4));
+			device.unmapMemory(transformBuffers.at(imageIndex).memory);
+		}
+	}
+}
+
+//TODO: Split present and retrieve
 void draw() {
+	state.frameCount = 0;
+	state.checkPoint = 0.0f;
+	state.currentTime = std::chrono::high_resolution_clock::now();
+
+	while (!glfwWindowShouldClose(window)) {
+		glfwPollEvents();
+
+		state.previousTime = state.currentTime;
+		state.currentTime = std::chrono::high_resolution_clock::now();
+		state.timeDelta = std::chrono::duration<float, std::chrono::seconds::period>(
+				state.currentTime - state.previousTime).count();
+		state.checkPoint += state.timeDelta;
+		state.frameCount++;
+
+		static_cast<void>(device.waitForFences(1, &frameFences[state.currentImage], true,
+											   std::numeric_limits<uint64_t>::max()));
+		auto imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(),
+													 availableSemaphores.at(state.currentImage), nullptr).value;
+
+		if (orderFences.at(imageIndex))
+			static_cast<void>(device.waitForFences(1, &orderFences.at(imageIndex), true,
+												   std::numeric_limits<uint64_t>::max()));
+
+		orderFences.at(imageIndex) = frameFences.at(state.currentImage);
+
+		std::array<vk::Semaphore, 1> waitSemaphores{availableSemaphores[state.currentImage]};
+		std::array<vk::Semaphore, 1> signalSemaphores{finishedSemaphores[state.currentImage]};
+		std::array<vk::PipelineStageFlags, 1> waitStages{vk::PipelineStageFlagBits::eColorAttachmentOutput};
+
+		updateScene(state.currentImage);
+
+		vk::SubmitInfo submitInfo{};
+		submitInfo.waitSemaphoreCount = waitSemaphores.size();
+		submitInfo.pWaitSemaphores = waitSemaphores.data();
+		submitInfo.pWaitDstStageMask = waitStages.data();
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffers.at(imageIndex);
+		submitInfo.signalSemaphoreCount = signalSemaphores.size();
+		submitInfo.pSignalSemaphores = signalSemaphores.data();
+
+		static_cast<void>(device.resetFences(1, &frameFences.at(state.currentImage)));
+		static_cast<void>(queue.submit(1, &submitInfo, frameFences.at(state.currentImage)));
+
+		vk::PresentInfoKHR presentInfo{};
+		presentInfo.waitSemaphoreCount = signalSemaphores.size();
+		presentInfo.pWaitSemaphores = signalSemaphores.data();
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = &swapchain;
+		presentInfo.pImageIndices = &imageIndex;
+		presentInfo.pResults = nullptr;
+
+		static_cast<void>(queue.presentKHR(presentInfo));
+		state.currentImage = (state.currentImage + 1) % details.imageCount;
+
+		if (state.checkPoint > 1.0f) {
+			auto title = std::to_string(state.frameCount);
+			glfwSetWindowTitle(window, title.c_str());
+			state.checkPoint = 0.0f;
+			state.frameCount = 0;
+		}
+	}
+
+	device.waitIdle();
 }
 
 void clear() {
+	for (auto finishedSemaphore : finishedSemaphores)
+		device.destroySemaphore(finishedSemaphore);
+	for (auto availableSemaphore : availableSemaphores)
+		device.destroySemaphore(availableSemaphore);
+	for (auto frameFence : frameFences)
+		device.destroyFence(frameFence);
 	device.destroyDescriptorPool(descriptorPool);
-	for (auto &modelBuffer : modelBuffers) {
+	for (auto &modelBuffer : transformBuffers) {
 		device.destroyBuffer(modelBuffer.data);
 		device.freeMemory(modelBuffer.memory);
 	}
@@ -1165,10 +1365,10 @@ void clear() {
 	device.freeMemory(vertexBuffer.memory);
 	device.destroyBuffer(indexBuffer.data);
 	device.freeMemory(indexBuffer.memory);
-	for (auto &image : images) {
-		device.destroyImageView(image.view);
-		device.destroyImage(image.data);
-		device.freeMemory(image.memory);
+	for (auto mesh : meshes) {
+		device.destroyImageView(mesh.texture.view);
+		device.destroyImage(mesh.texture.data);
+		device.freeMemory(mesh.texture.memory);
 	}
 	for (auto &framebuffer : framebuffers)
 		device.destroyFramebuffer(framebuffer);
