@@ -50,9 +50,8 @@ namespace svh {
 
 	struct Details {
 		uint32_t imageCount;
-		uint32_t meshCount;
-		uint32_t matrixCount;
-		uint32_t uniformAlignment;
+		uint32_t transformCount;
+		uint32_t bufferAlignment;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
@@ -77,34 +76,48 @@ namespace svh {
 	};
 
 	struct Buffer {
-		vk::Buffer data;
+		vk::Buffer buffer;
 		vk::DeviceMemory memory;
 	};
 
 	struct Image {
+		vk::Image image;
 		vk::ImageView view;
-		vk::Image data;
 		vk::DeviceMemory memory;
 	};
 
 	struct Mesh {
-		uint32_t primitiveOrder;
 		uint32_t indexOffset;
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
-		glm::mat4 transform;
-		Image texture;
+		uint32_t textureIndex;
+		uint32_t matrixIndex;
 	};
 
 	struct Model {
-		uint32_t meshIndex;
+		uint32_t meshOffset;
 		uint32_t meshCount;
 	};
 
 	struct Asset {
 		uint32_t modelIndex;
-		uint32_t uniformIndex;
-		glm::mat4 transform;
+		uint32_t matrixIndex;
+		uint32_t transformOffset;
+	};
+
+	struct Gate {
+		uint32_t indexOffset;
+		uint32_t indexLength;
+		uint32_t vertexOffset;
+		uint32_t vertexLength;
+		uint32_t imageWidth;
+		uint32_t imageHeight;
+	};
+
+	struct Portal {
+		uint32_t gateIndex;
+		uint32_t imageOffset;
+		uint32_t matrixOffset;
 	};
 }

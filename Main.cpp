@@ -3,6 +3,8 @@
 GLFWwindow *window;
 svh::Controls controls;
 svh::State state;
+svh::Camera camera;
+
 vk::Instance instance;
 vk::SurfaceKHR surface;
 vk::PhysicalDevice physicalDevice;
@@ -21,24 +23,30 @@ vk::Pipeline graphicsPipeline;
 vk::Sampler sampler;
 svh::Image depthImage, colorImage;
 std::vector<vk::Framebuffer> framebuffers;
-svh::Camera camera;
+
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
+std::vector<glm::mat4> matrices;
+std::vector<svh::Image> textures;
 std::vector<svh::Mesh> meshes;
 std::vector<svh::Model> models;
 std::vector<svh::Asset> assets;
+std::vector<svh::Portal> portals;
+
 svh::Buffer indexBuffer, vertexBuffer;
-std::vector<svh::Buffer> cameraBuffers, transformBuffers;
+std::vector<svh::Buffer> cameraBuffers, portalBuffers, transformBuffers;
+
 vk::DescriptorPool descriptorPool;
-std::vector<vk::DescriptorSet> descriptorSets;
+std::vector<vk::DescriptorSet> objectDescriptors, portalDescriptors;
 std::vector<vk::CommandBuffer> commandBuffers;
+
 std::vector<vk::Fence> frameFences, orderFences;
 std::vector<vk::Semaphore> availableSemaphores, finishedSemaphores;
 
 #ifndef NDEBUG
 
-vk::DispatchLoaderDynamic functionLoader;
 vk::DebugUtilsMessengerEXT messenger;
+vk::DispatchLoaderDynamic functionLoader;
 
 VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 											   VkDebugUtilsMessageTypeFlagsEXT type,
@@ -232,7 +240,6 @@ svh::Details generateDetails() {
 																 surfaceCapabilities.currentExtent.height));
 
 	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
-	temporaryDetails.matrixCount = 0;
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
 	temporaryDetails.swapchainTransform = surfaceCapabilities.currentTransform;
 
@@ -290,9 +297,10 @@ svh::Details generateDetails() {
 	temporaryDetails.mipLevels = 1;
 	temporaryDetails.maxAnisotropy = deviceProperties.limits.maxSamplerAnisotropy;
 
-	temporaryDetails.uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
-	while (temporaryDetails.uniformAlignment < sizeof(glm::mat4))
-		temporaryDetails.uniformAlignment += deviceProperties.limits.minUniformBufferOffsetAlignment;
+	temporaryDetails.transformCount = 0;
+	temporaryDetails.bufferAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
+	while (temporaryDetails.bufferAlignment < sizeof(glm::mat4))
+		temporaryDetails.bufferAlignment += deviceProperties.limits.minUniformBufferOffsetAlignment;
 
 	return temporaryDetails;
 }
@@ -400,13 +408,13 @@ void createRenderPass() {
 	vk::SubpassDependency dependency{};
 	dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 	dependency.dstSubpass = 0;
-	dependency.srcStageMask =
-			vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+	dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
+							  vk::PipelineStageFlagBits::eEarlyFragmentTests;
 	dependency.srcAccessMask = vk::AccessFlags{};
-	dependency.dstStageMask =
-			vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
-	dependency.dstAccessMask =
-			vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+	dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
+							  vk::PipelineStageFlagBits::eEarlyFragmentTests;
+	dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite |
+							   vk::AccessFlagBits::eDepthStencilAttachmentWrite;
 
 	vk::RenderPassCreateInfo renderPassInfo{};
 	renderPassInfo.attachmentCount = attachments.size();
@@ -702,14 +710,14 @@ void createFramebuffers() {
 	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
 				details.surfaceFormat.format, vk::ImageTiling::eOptimal,
 				vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.data, colorImage.memory);
-	colorImage.view = createImageView(colorImage.data, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.image, colorImage.memory);
+	colorImage.view = createImageView(colorImage.image, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor,
 									  1);
 
 	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
 				details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.data, depthImage.memory);
-	depthImage.view = createImageView(depthImage.data, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
+				vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.image, depthImage.memory);
+	depthImage.view = createImageView(depthImage.image, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
 
 	for (auto &swapchainView : swapchainViews) {
 		std::array<vk::ImageView, 3> attachments{colorImage.view, depthImage.view, swapchainView};
@@ -825,12 +833,12 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 }
 
 //TODO: Use continuous memory for images
-svh::Image loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t> &data) {
+void loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t> &data) {
 	svh::Image image;
 	svh::Buffer buffer;
 
 	createBuffer(data.size(), vk::BufferUsageFlagBits::eTransferSrc,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.data,
+				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.buffer,
 				 buffer.memory);
 
 	auto imageData = device.mapMemory(buffer.memory, 0, data.size());
@@ -839,36 +847,31 @@ svh::Image loadImage(uint32_t width, uint32_t height, uint32_t levels, vk::Forma
 
 	createImage(width, height, levels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
 				vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, image.data, image.memory);
-	transitionImageLayout(image.data, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, levels);
-	copyBufferToImage(buffer.data, image.data, width, height);
-	transitionImageLayout(image.data, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+				vk::MemoryPropertyFlagBits::eDeviceLocal, image.image, image.memory);
+	transitionImageLayout(image.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, levels);
+	copyBufferToImage(buffer.buffer, image.image, width, height);
+	transitionImageLayout(image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
 						  levels);
-	image.view = createImageView(image.data, format, vk::ImageAspectFlagBits::eColor, levels);
+	image.view = createImageView(image.image, format, vk::ImageAspectFlagBits::eColor, levels);
 
-	device.destroyBuffer(buffer.data);
+	device.destroyBuffer(buffer.buffer);
 	device.freeMemory(buffer.memory);
 
-	return image;
+	textures.push_back(image);
 }
 
-void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 transform) {
-	auto primitiveOrder = meshData.primitives.size();
-
+void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData) {
 	for (auto &primitive : meshData.primitives) {
-		svh::Mesh mesh{};
-		mesh.primitiveOrder = primitiveOrder;
-		mesh.indexOffset = indices.size();
-		mesh.vertexOffset = vertices.size();
-		mesh.transform = transform;
-
-		primitiveOrder--;
-		models.back().meshCount++;
-
 		auto &indexReference = modelData.bufferViews.at(primitive.indices);
 		auto &indexData = modelData.buffers.at(indexReference.buffer);
 
+		svh::Mesh mesh{};
+		mesh.indexOffset = indices.size();
+		mesh.vertexOffset = vertices.size();
+		mesh.matrixIndex = matrices.size();
+		mesh.textureIndex = textures.size() + primitive.material;
 		mesh.indexLength = indexReference.byteLength / sizeof(uint16_t);
+
 		indices.resize(mesh.indexOffset + mesh.indexLength);
 		std::memcpy(indices.data() + mesh.indexOffset, indexData.data.data() + indexReference.byteOffset,
 					indexReference.byteLength);
@@ -898,6 +901,7 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 		}
 
 		mesh.vertexLength = texcoords.size();
+		models.back().meshCount++;
 		meshes.push_back(mesh);
 
 		for (int index = 0; index < mesh.vertexLength; index++) {
@@ -911,6 +915,9 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 }
 
 void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 transform) {
+	if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
+		loadMesh(modelData, modelData.meshes.at(nodeData.mesh));
+
 	glm::mat4 scale{1.0f}, rotation{1.0f}, translation{1.0f};
 
 	if (!nodeData.rotation.empty())
@@ -922,25 +929,10 @@ void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 tr
 		translation[3][i] = nodeData.translation.at(i);
 
 	transform = transform * translation * rotation * scale;
-
-	if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
-		loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform);
+	matrices.push_back(transform);
 
 	for (auto &childIndex : nodeData.children)
 		loadNode(modelData, modelData.nodes.at(childIndex), transform);
-
-	for (auto &material : modelData.materials) {
-		for (auto &value : material.values) {
-			if (!value.first.compare("baseColorTexture")) {
-				auto &image = modelData.images.at(modelData.textures.at(value.second.TextureIndex()).source);
-				auto meshIndex = models.back().meshIndex + value.second.TextureTexCoord();
-
-				for (uint32_t index = meshIndex; index < meshIndex + meshes.at(meshIndex).primitiveOrder; index++)
-					meshes.at(index).texture = loadImage(image.width, image.height, details.mipLevels,
-														 details.imageFormat, image.image);
-			}
-		}
-	}
 }
 
 void loadModel(std::string filename) {
@@ -956,27 +948,39 @@ void loadModel(std::string filename) {
 	if (!error.empty())
 		std::cout << "GLTF Error: " << error << std::endl;
 	if (!result)
-		std::cout << "GLTF modelData could not be loaded!" << std::endl;
+		return;
 #endif
 
 	svh::Model model;
-	model.meshIndex = meshes.size();
+	model.meshOffset = meshes.size();
 	model.meshCount = 0;
 	models.push_back(model);
 	auto &scene = modelData.scenes.at(modelData.defaultScene);
 
 	for (auto &nodeIndex : scene.nodes)
 		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{1.0f});
-	details.meshCount += models.back().meshCount;
+
+	for (int i = 0; i < modelData.materials.size(); i++) {
+		auto &material = modelData.materials.at(i);
+
+		for (auto &value : material.values) {
+			if (!value.first.compare("baseColorTexture")) {
+				auto &image = modelData.images.at(value.second.TextureIndex());
+				loadTexture(image.width, image.height, details.mipLevels, details.imageFormat, image.image);
+			}
+		}
+	}
 }
 
 void addAsset(uint32_t model, glm::mat4 transform = glm::mat4{1.0f}) {
 	svh::Asset asset{};
 	asset.modelIndex = model;
-	asset.transform = transform;
-	asset.uniformIndex = details.matrixCount;
+	asset.matrixIndex = matrices.size();
+	asset.transformOffset = details.transformCount;
 	assets.push_back(asset);
-	details.matrixCount += models.at(model).meshCount;
+
+	matrices.push_back(transform);
+	details.transformCount += models.at(model).meshCount;
 }
 
 void createScene() {
@@ -993,8 +997,8 @@ void createScene() {
 	addAsset(0, glm::translate(glm::mat4{1.0f}, glm::vec3{-4.0f, 0.0f, 0.0f}));
 	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, 4.0f, 0.0f}));
 	addAsset(1, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, -4.0f, 0.0f}));
-	addAsset(2, glm::translate(glm::mat4{1.0f}, glm::vec3{0.0f, 0.0f, 3.0f}) *
-		  glm::rotate(glm::radians(180.0f), glm::vec3{0.0f, 0.0f, 1.0f}));
+	addAsset(2, glm::translate(glm::rotate(glm::radians(180.0f), glm::vec3{0.0f, 0.0f, 1.0f}),
+							   glm::vec3{0.0f, 0.0f, 3.0f}));
 }
 
 void createElementBuffers() {
@@ -1004,43 +1008,43 @@ void createElementBuffers() {
 
 	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferSrc,
 				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-				 stagingBuffer.data, stagingBuffer.memory);
+				 stagingBuffer.buffer, stagingBuffer.memory);
 
 	auto indexData = device.mapMemory(stagingBuffer.memory, 0, indexSize);
 	std::memcpy(indexData, indices.data(), indexSize);
 	device.unmapMemory(stagingBuffer.memory);
 
 	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.data, indexBuffer.memory);
-	copyBuffer(stagingBuffer.data, indexBuffer.data, indexSize);
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.buffer, indexBuffer.memory);
+	copyBuffer(stagingBuffer.buffer, indexBuffer.buffer, indexSize);
 
-	device.destroyBuffer(stagingBuffer.data);
+	device.destroyBuffer(stagingBuffer.buffer);
 	device.freeMemory(stagingBuffer.memory);
 
 	auto vertexSize = vertices.size() * sizeof(svh::Vertex);
 
 	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferSrc,
 				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-				 stagingBuffer.data, stagingBuffer.memory);
+				 stagingBuffer.buffer, stagingBuffer.memory);
 
 	auto vertexData = device.mapMemory(stagingBuffer.memory, 0, vertexSize);
 	std::memcpy(vertexData, vertices.data(), vertexSize);
 	device.unmapMemory(stagingBuffer.memory);
 
 	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.data, vertexBuffer.memory);
-	copyBuffer(stagingBuffer.data, vertexBuffer.data, vertexSize);
+				 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.buffer, vertexBuffer.memory);
+	copyBuffer(stagingBuffer.buffer, vertexBuffer.buffer, vertexSize);
 
-	device.destroyBuffer(stagingBuffer.data);
+	device.destroyBuffer(stagingBuffer.buffer);
 	device.freeMemory(stagingBuffer.memory);
 
-	auto modelSize = details.matrixCount * details.uniformAlignment;
+	auto modelSize = details.transformCount * details.bufferAlignment;
 	transformBuffers.resize(details.imageCount);
 
 	for (auto &modelBuffer : transformBuffers)
 		createBuffer(modelSize, vk::BufferUsageFlagBits::eUniformBuffer,
 					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-					 modelBuffer.data, modelBuffer.memory);
+					 modelBuffer.buffer, modelBuffer.memory);
 
 	auto cameraSize = sizeof(glm::mat4);
 	cameraBuffers.resize(details.imageCount);
@@ -1048,12 +1052,12 @@ void createElementBuffers() {
 	for (auto &cameraBuffer : cameraBuffers)
 		createBuffer(cameraSize, vk::BufferUsageFlagBits::eUniformBuffer,
 					 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-					 cameraBuffer.data, cameraBuffer.memory);
+					 cameraBuffer.buffer, cameraBuffer.memory);
 }
 
-//TODO: Combine model-view and projection matrices in same buffer
+//TODO: Combine model-view and projection matrices in the same buffer
 void createDescriptorSets() {
-	auto descriptorCount = details.imageCount * details.meshCount;
+	auto descriptorCount = details.imageCount * meshes.size();
 
 	vk::DescriptorPoolSize modelSize{};
 	modelSize.type = vk::DescriptorType::eUniformBufferDynamic;
@@ -1083,27 +1087,27 @@ void createDescriptorSets() {
 	allocateInfo.descriptorSetCount = descriptorCount;
 	allocateInfo.pSetLayouts = layouts.data();
 
-	descriptorSets = device.allocateDescriptorSets(allocateInfo);
+	objectDescriptors = device.allocateDescriptorSets(allocateInfo);
 
 	for (uint32_t i = 0; i < details.imageCount; i++) {
-		for (uint32_t j = 0; j < details.meshCount; j++) {
+		for (uint32_t j = 0; j < meshes.size(); j++) {
 			vk::DescriptorBufferInfo modelInfo{};
-			modelInfo.buffer = transformBuffers.at(i).data;
+			modelInfo.buffer = transformBuffers.at(i).buffer;
 			modelInfo.offset = 0;
-			modelInfo.range = details.uniformAlignment;
+			modelInfo.range = details.bufferAlignment;
 
 			vk::DescriptorBufferInfo cameraInfo{};
-			cameraInfo.buffer = cameraBuffers.at(i).data;
+			cameraInfo.buffer = cameraBuffers.at(i).buffer;
 			cameraInfo.offset = 0;
 			cameraInfo.range = sizeof(glm::mat4);
 
 			vk::DescriptorImageInfo samplerInfo{};
 			samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-			samplerInfo.imageView = meshes.at(j).texture.view;
+			samplerInfo.imageView = textures.at(meshes.at(j).textureIndex).view;
 			samplerInfo.sampler = sampler;
 
 			vk::WriteDescriptorSet modelWrite{};
-			modelWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			modelWrite.dstSet = objectDescriptors.at(i * meshes.size() + j);
 			modelWrite.dstBinding = 0;
 			modelWrite.dstArrayElement = 0;
 			modelWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
@@ -1113,7 +1117,7 @@ void createDescriptorSets() {
 			modelWrite.pTexelBufferView = nullptr;
 
 			vk::WriteDescriptorSet cameraWrite{};
-			cameraWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			cameraWrite.dstSet = objectDescriptors.at(i * meshes.size() + j);
 			cameraWrite.dstBinding = 1;
 			cameraWrite.dstArrayElement = 0;
 			cameraWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
@@ -1123,7 +1127,7 @@ void createDescriptorSets() {
 			cameraWrite.pTexelBufferView = nullptr;
 
 			vk::WriteDescriptorSet samplerWrite{};
-			samplerWrite.dstSet = descriptorSets.at(i * details.meshCount + j);
+			samplerWrite.dstSet = objectDescriptors.at(i * meshes.size() + j);
 			samplerWrite.dstBinding = 2;
 			samplerWrite.dstArrayElement = 0;
 			samplerWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
@@ -1139,7 +1143,7 @@ void createDescriptorSets() {
 	}
 }
 
-//TODO: Implement a index function
+//TODO: Implement an indexing function
 void createCommandBuffers() {
 	vk::CommandBufferAllocateInfo allocateInfo{};
 	allocateInfo.commandPool = commandPool;
@@ -1176,17 +1180,17 @@ void createCommandBuffers() {
 
 		commandBuffers.at(i).begin(beginInfo);
 		commandBuffers.at(i).beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
-		commandBuffers.at(i).bindVertexBuffers(0, 1, &vertexBuffer.data, &bufferOffset);
-		commandBuffers.at(i).bindIndexBuffer(indexBuffer.data, 0, vk::IndexType::eUint16);
+		commandBuffers.at(i).bindVertexBuffers(0, 1, &vertexBuffer.buffer, &bufferOffset);
+		commandBuffers.at(i).bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
 		commandBuffers.at(i).bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 		for (auto &asset : assets) {
 			auto &model = models.at(asset.modelIndex);
 			for (uint32_t j = 0; j < model.meshCount; j++) {
-				auto mesh = meshes.at(j + model.meshIndex);
-				auto dynamicOffset = (j + asset.uniformIndex) * details.uniformAlignment;
+				auto mesh = meshes.at(j + model.meshOffset);
+				auto dynamicOffset = (j + asset.transformOffset) * details.bufferAlignment;
 				commandBuffers.at(i).bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-														&descriptorSets.at(i * details.meshCount + j + model.meshIndex),
+														&objectDescriptors.at(i * meshes.size() + j + model.meshOffset),
 														1, &dynamicOffset);
 				commandBuffers.at(i).drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 			}
@@ -1266,12 +1270,12 @@ void updateScene(uint32_t imageIndex) {
 	for (auto &asset : assets) {
 		auto &model = models.at(asset.modelIndex);
 
-		for (int i = model.meshIndex; i < model.meshIndex + model.meshCount; i++) {
+		for (int i = model.meshOffset; i < model.meshOffset + model.meshCount; i++) {
 			auto &mesh = meshes.at(i);
-			transform = asset.transform * mesh.transform;
+			transform = matrices.at(asset.matrixIndex) * matrices.at(mesh.matrixIndex);
 
 			data = device.mapMemory(transformBuffers.at(imageIndex).memory,
-									asset.uniformIndex * details.uniformAlignment, sizeof(glm::mat4));
+									asset.transformOffset * details.bufferAlignment, sizeof(glm::mat4));
 			std::memcpy(data, &transform, sizeof(glm::mat4));
 			device.unmapMemory(transformBuffers.at(imageIndex).memory);
 		}
@@ -1354,29 +1358,29 @@ void clear() {
 		device.destroyFence(frameFence);
 	device.destroyDescriptorPool(descriptorPool);
 	for (auto &modelBuffer : transformBuffers) {
-		device.destroyBuffer(modelBuffer.data);
+		device.destroyBuffer(modelBuffer.buffer);
 		device.freeMemory(modelBuffer.memory);
 	}
 	for (auto &cameraBuffer : cameraBuffers) {
-		device.destroyBuffer(cameraBuffer.data);
+		device.destroyBuffer(cameraBuffer.buffer);
 		device.freeMemory(cameraBuffer.memory);
 	}
-	device.destroyBuffer(vertexBuffer.data);
+	device.destroyBuffer(vertexBuffer.buffer);
 	device.freeMemory(vertexBuffer.memory);
-	device.destroyBuffer(indexBuffer.data);
+	device.destroyBuffer(indexBuffer.buffer);
 	device.freeMemory(indexBuffer.memory);
-	for (auto mesh : meshes) {
-		device.destroyImageView(mesh.texture.view);
-		device.destroyImage(mesh.texture.data);
-		device.freeMemory(mesh.texture.memory);
+	for (auto &texture : textures) {
+		device.destroyImageView(texture.view);
+		device.destroyImage(texture.image);
+		device.freeMemory(texture.memory);
 	}
 	for (auto &framebuffer : framebuffers)
 		device.destroyFramebuffer(framebuffer);
 	device.destroyImageView(colorImage.view);
-	device.destroyImage(colorImage.data);
+	device.destroyImage(colorImage.image);
 	device.freeMemory(colorImage.memory);
 	device.destroyImageView(depthImage.view);
-	device.destroyImage(depthImage.data);
+	device.destroyImage(depthImage.image);
 	device.freeMemory(depthImage.memory);
 	device.destroySampler(sampler);
 	device.destroyPipeline(graphicsPipeline);
