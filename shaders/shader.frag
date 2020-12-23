@@ -20,5 +20,6 @@ void main()
 	vec3 pointLight = intensity * lightColor;
 	vec3 ambientLight = vec3(0.1f, 0.1f, 0.1f);
 
-	outputColor = vec4(pointLight + ambientLight, 1.0f) * texture(textureSampler, inputTexture);
+	outputColor = texture(textureSampler, inputTexture);
+	//outputColor = vec4(pointLight + ambientLight, 1.0f) * texture(textureSampler, inputTexture);
 }

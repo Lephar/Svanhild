@@ -1,5 +1,6 @@
 #pragma once
 
+//#define VULKAN_HPP_NO_EXCEPTIONS
 #define GLFW_INCLUDE_VULKAN
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -21,14 +22,18 @@
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <tinygltf/tiny_gltf.h>
 
 namespace svh {
 	struct Controls {
+		uint8_t observer;
 		double_t mouseX;
 		double_t mouseY;
+		float_t deltaX;
+		float_t deltaY;
 		uint8_t keyW;
 		uint8_t keyA;
 		uint8_t keyS;
@@ -50,7 +55,8 @@ namespace svh {
 
 	struct Details {
 		uint32_t imageCount;
-		uint32_t transformCount;
+		uint32_t renderTransformCount;
+		uint32_t offscreenTransformCount;
 		uint32_t bufferAlignment;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
@@ -64,9 +70,9 @@ namespace svh {
 	};
 
 	struct Vertex {
-		glm::vec3 pos;
-		glm::vec3 nor;
-		glm::vec2 tex;
+		glm::vec3 position;
+		glm::vec3 normal;
+		glm::vec2 texture;
 	};
 
 	struct Camera {
@@ -81,6 +87,8 @@ namespace svh {
 	};
 
 	struct Image {
+		uint32_t width;
+		uint32_t height;
 		vk::Image image;
 		vk::ImageView view;
 		vk::DeviceMemory memory;
@@ -91,7 +99,7 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
-		uint32_t textureIndex;
+		uint32_t textureOffset;
 		uint32_t matrixIndex;
 	};
 
@@ -106,18 +114,8 @@ namespace svh {
 		uint32_t transformOffset;
 	};
 
-	struct Gate {
-		uint32_t indexOffset;
-		uint32_t indexLength;
-		uint32_t vertexOffset;
-		uint32_t vertexLength;
-		uint32_t imageWidth;
-		uint32_t imageHeight;
-	};
-
 	struct Portal {
-		uint32_t gateIndex;
-		uint32_t imageOffset;
-		uint32_t matrixOffset;
+		uint32_t blueAssetIndex;
+		uint32_t orangeAssetIndex;
 	};
 }
