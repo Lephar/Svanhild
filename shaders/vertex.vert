@@ -2,12 +2,7 @@
 #extension GL_ARB_separate_shader_objects: enable
 
 layout(binding = 0) uniform Transform {
-    mat4 model;
-};
-
-layout(binding = 1) uniform Camera {
-    mat4 view;
-    mat4 projection;
+    mat4 transform;
 };
 
 layout(location = 0) in vec3 inputPosition;
@@ -20,9 +15,9 @@ layout(location = 2) out vec2 outputTexture;
 
 void main()
 {
-    outputPosition = vec3(model * vec4(inputPosition, 1.0f));
-    outputNormal = normalize(vec3(model * vec4(inputNormal, 0.0f)));
+    outputPosition = inputPosition;
+    outputNormal = inputNormal;
     outputTexture = inputTexture;
 
-    gl_Position = projection * view * vec4(outputPosition, 1.0f);
+    gl_Position = transform * vec4(outputPosition, 1.0f);
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-//#define VULKAN_HPP_NO_EXCEPTIONS
+#define VULKAN_HPP_NO_EXCEPTIONS
 #define GLFW_INCLUDE_VULKAN
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -55,9 +55,11 @@ namespace svh {
 
 	struct Details {
 		uint32_t imageCount;
-		uint32_t renderTransformCount;
-		uint32_t offscreenTransformCount;
-		uint32_t bufferAlignment;
+		uint32_t portalCount;
+		uint32_t meshCount;
+		uint32_t uniformAlignment;
+		uint32_t uniformStride;
+		uint32_t uniformSize;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
@@ -76,8 +78,8 @@ namespace svh {
 	};
 
 	struct Camera {
-		glm::vec3 pos;
-		glm::vec3 dir;
+		glm::vec3 position;
+		glm::vec3 direction;
 		glm::vec3 up;
 	};
 
@@ -87,8 +89,6 @@ namespace svh {
 	};
 
 	struct Image {
-		uint32_t width;
-		uint32_t height;
 		vk::Image image;
 		vk::ImageView view;
 		vk::DeviceMemory memory;
@@ -99,23 +99,10 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
-		uint32_t textureOffset;
-		uint32_t matrixIndex;
-	};
-
-	struct Model {
-		uint32_t meshOffset;
-		uint32_t meshCount;
-	};
-
-	struct Asset {
-		uint32_t modelIndex;
-		uint32_t matrixIndex;
-		uint32_t transformOffset;
-	};
-
-	struct Portal {
-		uint32_t blueAssetIndex;
-		uint32_t orangeAssetIndex;
+		glm::mat4 transform;
+		Image texture;
+		vk::DescriptorSet descriptorSet;
+		vk::Pipeline stencilPipeline;
+		vk::Pipeline renderPipeline;
 	};
 }

@@ -1,7 +1,7 @@
 #version 460 core
 #extension GL_ARB_separate_shader_objects: enable
 
-layout(binding = 2) uniform sampler2D textureSampler;
+layout(binding = 1) uniform sampler2D textureSampler;
 
 layout(location = 0) in vec3 inputPosition;
 layout(location = 1) in vec3 inputNormal;
@@ -20,6 +20,6 @@ void main()
 	vec3 pointLight = intensity * lightColor;
 	vec3 ambientLight = vec3(0.1f, 0.1f, 0.1f);
 
-	outputColor = texture(textureSampler, inputTexture);
-	//outputColor = vec4(pointLight + ambientLight, 1.0f) * texture(textureSampler, inputTexture);
+	//outputColor = texture(textureSampler, inputTexture);
+	outputColor = vec4(pointLight + ambientLight, 1.0f) * texture(textureSampler, inputTexture);
 }
