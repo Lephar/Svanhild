@@ -4,10 +4,7 @@ set(CMAKE_C_STANDARD 17)
 
 project (Svanhild)
 
-add_custom_command(OUTPUT shaders/vertex.spv COMMAND glslc shaders/vertex.vert -o shaders/vertex.spv -O)
-add_custom_command(OUTPUT shaders/fragment.spv COMMAND glslc shaders/fragment.frag -o shaders/fragment.spv -O)
-file(COPY models shaders DESTINATION ${PROJECT_BINARY_DIR})
-
+file(COPY ${PROJECT_SOURCE_DIR}/models ${PROJECT_SOURCE_DIR}/shaders DESTINATION ${PROJECT_BINARY_DIR})
 add_custom_target(Shaders ALL DEPENDS ${PROJECT_BINARY_DIR}/shaders/vertex.spv ${PROJECT_BINARY_DIR}/shaders/fragment.spv)
 add_custom_target(Models ALL DEPENDS ${PROJECT_BINARY_DIR}/models)
 
@@ -16,8 +13,8 @@ add_dependencies(Svanhild Shaders Models)
 
 if(WIN32)
 	find_package(Vulkan REQUIRED)
-	target_include_directories(Svanhild PRIVATE Vulkan::Vulkan headers)
-	target_link_libraries(Svanhild Vulkan::Vulkan ${PROJECT_SOURCE_DIR}/libraries/GLFW/glfw3.lib)
+	target_include_directories(Svanhild PRIVATE Vulkan::Vulkan ${PROJECT_SOURCE_DIR}/headers)
+	target_link_libraries(Svanhild Vulkan::Vulkan ${PROJECT_SOURCE_DIR}/libraries/glfw3.lib)
 	add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 

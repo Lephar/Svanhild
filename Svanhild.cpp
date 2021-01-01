@@ -616,8 +616,6 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform) {
 	glm::mat4 scale{ 1.0f }, rotation{ 1.0f }, translation{ 1.0f };
 
-	//glm::quat lol{ nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2) };
-
 	if (!nodeData.rotation.empty())
 		rotation = glm::toMat4(glm::qua{
 			nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
