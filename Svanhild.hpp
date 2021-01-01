@@ -1,15 +1,9 @@
-#pragma once
+﻿#pragma once
 
-#define VULKAN_HPP_NO_EXCEPTIONS
-#define GLFW_INCLUDE_VULKAN
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#define GLM_FORCE_SWIZZLE
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_RIGHT_HANDED
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 
 #include <array>
 #include <limits>
@@ -18,14 +12,15 @@
 #include <memory>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 
-#include <vulkan/vulkan.hpp>
-#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <tinygltf/tiny_gltf.h>
+#include <vulkan/vulkan.hpp>
+#include <GLFW/glfw3.h>
 
 namespace svh {
 	struct Controls {
@@ -49,8 +44,8 @@ namespace svh {
 		uint16_t frameCount;
 		float_t timeDelta;
 		float_t checkPoint;
-		std::chrono::time_point<std::chrono::system_clock> previousTime;
-		std::chrono::time_point<std::chrono::system_clock> currentTime;
+		std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
+		std::chrono::time_point<std::chrono::high_resolution_clock> currentTime;
 	};
 
 	struct Details {

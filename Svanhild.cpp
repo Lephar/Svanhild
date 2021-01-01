@@ -1,10 +1,14 @@
-#include "Svanhild.hpp"
+﻿#include "Svanhild.hpp"
 
-GLFWwindow *window;
+GLFWwindow* window;
 svh::Controls controls;
 svh::State state;
 svh::Camera observerCamera, playerCamera;
 tinygltf::TinyGLTF objectLoader;
+
+std::vector<uint16_t> indices;
+std::vector<svh::Vertex> vertices;
+std::vector<svh::Mesh> meshes;
 
 vk::Instance instance;
 vk::SurfaceKHR surface;
@@ -24,16 +28,9 @@ vk::PipelineLayout pipelineLayout;
 vk::Pipeline graphicsPipeline;
 svh::Image colorImage, depthImage;
 std::vector<vk::Framebuffer> framebuffers;
-
-std::vector<uint16_t> indices;
-std::vector<svh::Vertex> vertices;
-std::vector<svh::Mesh> meshes;
-
 svh::Buffer indexBuffer, vertexBuffer, uniformBuffer;
-
 vk::DescriptorPool descriptorPool;
 std::vector<vk::CommandBuffer> commandBuffers;
-
 std::vector<vk::Fence> frameFences, orderFences;
 std::vector<vk::Semaphore> availableSemaphores, finishedSemaphores;
 
@@ -43,9 +40,9 @@ vk::DebugUtilsMessengerEXT messenger;
 vk::DispatchLoaderDynamic functionLoader;
 
 VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-											   VkDebugUtilsMessageTypeFlagsEXT type,
-											   const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
-											   void *pUserData) {
+	VkDebugUtilsMessageTypeFlagsEXT type,
+	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+	void* pUserData) {
 	static_cast<void>(type);
 	static_cast<void>(pUserData);
 
@@ -57,7 +54,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 
 #endif
 
-void mouseCallback(GLFWwindow *handle, double x, double y) {
+void mouseCallback(GLFWwindow* handle, double x, double y) {
 	static_cast<void>(handle);
 
 	controls.deltaX = controls.mouseX - x;
@@ -66,7 +63,7 @@ void mouseCallback(GLFWwindow *handle, double x, double y) {
 	controls.mouseY = y;
 }
 
-void keyboardCallback(GLFWwindow *handle, int key, int scancode, int action, int mods) {
+void keyboardCallback(GLFWwindow* handle, int key, int scancode, int action, int mods) {
 	static_cast<void>(scancode);
 	static_cast<void>(mods);
 
@@ -87,7 +84,8 @@ void keyboardCallback(GLFWwindow *handle, int key, int scancode, int action, int
 			controls.keyR = 0;
 		else if (key == GLFW_KEY_F)
 			controls.keyF = 0;
-	} else if (action == GLFW_PRESS) {
+	}
+	else if (action == GLFW_PRESS) {
 		if (key == GLFW_KEY_W)
 			controls.keyW = 1;
 		else if (key == GLFW_KEY_S)
@@ -116,7 +114,7 @@ void keyboardCallback(GLFWwindow *handle, int key, int scancode, int action, int
 	}
 }
 
-void resizeEvent(GLFWwindow *handle, int width, int height) {
+void resizeEvent(GLFWwindow* handle, int width, int height) {
 	static_cast<void>(width);
 	static_cast<void>(height);
 
@@ -151,7 +149,7 @@ void initializeCore() {
 
 	auto extensionCount = 0u;
 	auto extensionNames = glfwGetRequiredInstanceExtensions(&extensionCount);
-	std::vector<const char *> layers{}, extensions{extensionNames, extensionNames + extensionCount};
+	std::vector<const char*> layers{}, extensions{ extensionNames, extensionNames + extensionCount };
 
 #ifndef NDEBUG
 	layers.push_back("VK_LAYER_KHRONOS_validation");
@@ -161,7 +159,7 @@ void initializeCore() {
 	vk::ApplicationInfo applicationInfo{};
 	applicationInfo.pApplicationName = "Svanhild";
 	applicationInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-	applicationInfo.pEngineName = "Silibrand Engine";
+	applicationInfo.pEngineName = "Svanhild Engine";
 	applicationInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
 	applicationInfo.apiVersion = VK_API_VERSION_1_2;
 
@@ -176,34 +174,34 @@ void initializeCore() {
 	vk::DebugUtilsMessengerCreateInfoEXT messengerInfo{};
 	messengerInfo.flags = vk::DebugUtilsMessengerCreateFlagsEXT{};
 	messengerInfo.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-									vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
-									vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-									vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+		vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
 	messengerInfo.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-								vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-								vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation;
+		vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
+		vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation;
 	messengerInfo.pfnUserCallback = messageCallback;
 
 	instanceInfo.pNext = &messengerInfo;
 #endif
 
-	instance = vk::createInstance(instanceInfo).value;
+	instance = vk::createInstance(instanceInfo);
 
 #ifndef NDEBUG
-	functionLoader = vk::DispatchLoaderDynamic{instance, vkGetInstanceProcAddr};
-	messenger = instance.createDebugUtilsMessengerEXT(messengerInfo, nullptr, functionLoader).value;
+	functionLoader = vk::DispatchLoaderDynamic{ instance, vkGetInstanceProcAddr };
+	messenger = instance.createDebugUtilsMessengerEXT(messengerInfo, nullptr, functionLoader);
 #endif
 
 	VkSurfaceKHR surfaceHandle;
 	glfwCreateWindowSurface(instance, window, nullptr, &surfaceHandle);
-	surface = vk::SurfaceKHR{surfaceHandle};
+	surface = vk::SurfaceKHR{ surfaceHandle };
 }
 
 //TODO: Implement a better device selection
 vk::PhysicalDevice pickPhysicalDevice() {
-	auto physicalDevices = instance.enumeratePhysicalDevices().value;
+	auto physicalDevices = instance.enumeratePhysicalDevices();
 
-	for (auto &temporaryDevice : physicalDevices) {
+	for (auto& temporaryDevice : physicalDevices) {
 		auto properties = temporaryDevice.getProperties();
 
 		if (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
@@ -219,7 +217,7 @@ uint32_t selectQueueFamily() {
 
 	for (auto index = 0u; index < queueFamilies.size(); index++) {
 		auto graphicsSupport = queueFamilies.at(index).queueFlags & vk::QueueFlagBits::eGraphics;
-		auto presentSupport = physicalDevice.getSurfaceSupportKHR(index, surface).value;
+		auto presentSupport = physicalDevice.getSurfaceSupportKHR(index, surface);
 
 		if (graphicsSupport && presentSupport)
 			return index;
@@ -234,7 +232,7 @@ void createDevice() {
 
 	auto queuePriority = 1.0f;
 	vk::PhysicalDeviceFeatures deviceFeatures{};
-	std::vector<const char *> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+	std::vector<const char*> extensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 	vk::DeviceQueueCreateInfo queueInfo{};
 	queueInfo.queueFamilyIndex = familyIndex;
@@ -251,9 +249,9 @@ void createDevice() {
 	vk::CommandPoolCreateInfo poolInfo{};
 	poolInfo.queueFamilyIndex = familyIndex;
 
-	device = physicalDevice.createDevice(deviceInfo).value;
+	device = physicalDevice.createDevice(deviceInfo);
 	queue = device.getQueue(familyIndex, 0);
-	commandPool = device.createCommandPool(poolInfo).value;
+	commandPool = device.createCommandPool(poolInfo);
 }
 
 //TODO: Check format availability
@@ -263,42 +261,44 @@ svh::Details generateDetails() {
 	temporaryDetails.meshCount = 0;
 	temporaryDetails.portalCount = 0;
 
-	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface).value;
-	glfwGetFramebufferSize(window, reinterpret_cast<int *>(&surfaceCapabilities.currentExtent.width),
-						   reinterpret_cast<int *>(&surfaceCapabilities.currentExtent.height));
+	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
+	glfwGetFramebufferSize(window, reinterpret_cast<int*>(&surfaceCapabilities.currentExtent.width),
+		reinterpret_cast<int*>(&surfaceCapabilities.currentExtent.height));
 	surfaceCapabilities.currentExtent.width = std::max(surfaceCapabilities.minImageExtent.width,
-													   std::min(surfaceCapabilities.maxImageExtent.width,
-																surfaceCapabilities.currentExtent.width));
+		std::min(surfaceCapabilities.maxImageExtent.width,
+			surfaceCapabilities.currentExtent.width));
 	surfaceCapabilities.currentExtent.height = std::max(surfaceCapabilities.minImageExtent.height,
-														std::min(surfaceCapabilities.maxImageExtent.height,
-																 surfaceCapabilities.currentExtent.height));
+		std::min(surfaceCapabilities.maxImageExtent.height,
+			surfaceCapabilities.currentExtent.height));
 
 	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
 	temporaryDetails.swapchainTransform = surfaceCapabilities.currentTransform;
 
-	auto surfaceFormats = physicalDevice.getSurfaceFormatsKHR(surface).value;
+	auto surfaceFormats = physicalDevice.getSurfaceFormatsKHR(surface);
 	temporaryDetails.surfaceFormat = surfaceFormats.front();
 
-	for (auto &surfaceFormat : surfaceFormats)
+	for (auto& surfaceFormat : surfaceFormats)
 		if (surfaceFormat.format == vk::Format::eB8G8R8A8Srgb &&
 			surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
 			temporaryDetails.surfaceFormat = surfaceFormat;
 
-	auto presentModes = physicalDevice.getSurfacePresentModesKHR(surface).value;
-	auto immediateSupport = false;
-	temporaryDetails.presentMode = vk::PresentModeKHR::eFifo;
+	auto presentModes = physicalDevice.getSurfacePresentModesKHR(surface);
+	auto immediateSupport = false, mailboxSupport = false;
 
-	for (auto &presentMode : presentModes) {
-		if (presentMode == vk::PresentModeKHR::eMailbox) {
-			temporaryDetails.presentMode = presentMode;
-			break;
-		} else if (presentMode == vk::PresentModeKHR::eImmediate)
+	for (auto& presentMode : presentModes) {
+		if (presentMode == vk::PresentModeKHR::eMailbox)
+			mailboxSupport = true;
+		else if (presentMode == vk::PresentModeKHR::eImmediate)
 			immediateSupport = true;
 	}
 
-	if (immediateSupport && temporaryDetails.presentMode != vk::PresentModeKHR::eMailbox)
+	if (mailboxSupport)
+		temporaryDetails.presentMode = vk::PresentModeKHR::eMailbox;
+	else if (immediateSupport)
 		temporaryDetails.presentMode = vk::PresentModeKHR::eImmediate;
+	else
+		temporaryDetails.presentMode = vk::PresentModeKHR::eFifo;
 
 	temporaryDetails.imageFormat = vk::Format::eR8G8B8A8Srgb;
 	temporaryDetails.depthStencilFormat = vk::Format::eD32SfloatS8Uint;
@@ -328,7 +328,7 @@ VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectF
 	viewInfo.subresourceRange.layerCount = 1;
 	viewInfo.subresourceRange.baseArrayLayer = 0;
 
-	return device.createImageView(viewInfo).value;
+	return device.createImageView(viewInfo);
 }
 
 //TODO: Implement swapchain recreation on window resize
@@ -353,13 +353,13 @@ void createSwapchain() {
 	swapchainInfo.clipped = true;
 	swapchainInfo.oldSwapchain = nullptr;
 
-	swapchain = device.createSwapchainKHR(swapchainInfo).value;
-	swapchainImages = device.getSwapchainImagesKHR(swapchain).value;
+	swapchain = device.createSwapchainKHR(swapchainInfo);
+	swapchainImages = device.getSwapchainImagesKHR(swapchain);
 	details.imageCount = swapchainImages.size();
 
-	for (auto &swapchainImage : swapchainImages)
+	for (auto& swapchainImage : swapchainImages)
 		swapchainViews.push_back(
-				createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
+			createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
 }
 
 uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
@@ -373,26 +373,26 @@ uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
 }
 
 void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties,
-				  vk::Buffer &buffer, vk::DeviceMemory &bufferMemory) {
+	vk::Buffer& buffer, vk::DeviceMemory& bufferMemory) {
 	vk::BufferCreateInfo bufferInfo{};
 	bufferInfo.sharingMode = vk::SharingMode::eExclusive;
 	bufferInfo.usage = usage;
 	bufferInfo.size = size;
 
-	buffer = device.createBuffer(bufferInfo).value;
+	buffer = device.createBuffer(bufferInfo);
 	auto memoryRequirements = device.getBufferMemoryRequirements(buffer);
 
 	vk::MemoryAllocateInfo allocateInfo{};
 	allocateInfo.allocationSize = memoryRequirements.size;
 	allocateInfo.memoryTypeIndex = chooseMemoryType(memoryRequirements.memoryTypeBits, properties);
 
-	bufferMemory = device.allocateMemory(allocateInfo).value;
+	bufferMemory = device.allocateMemory(allocateInfo);
 	static_cast<void>(device.bindBufferMemory(buffer, bufferMemory, 0));
 }
 
 void createImage(uint32_t imageWidth, uint32_t imageHeight, uint32_t mipLevels, vk::SampleCountFlagBits samples,
-				 vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
-				 vk::MemoryPropertyFlags properties, vk::Image &image, vk::DeviceMemory &imageMemory) {
+	vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+	vk::MemoryPropertyFlags properties, vk::Image& image, vk::DeviceMemory& imageMemory) {
 	vk::ImageCreateInfo imageInfo{};
 	imageInfo.imageType = vk::ImageType::e2D;
 	imageInfo.extent.width = imageWidth;
@@ -407,14 +407,14 @@ void createImage(uint32_t imageWidth, uint32_t imageHeight, uint32_t mipLevels, 
 	imageInfo.samples = samples;
 	imageInfo.sharingMode = vk::SharingMode::eExclusive;
 
-	image = device.createImage(imageInfo).value;
+	image = device.createImage(imageInfo);
 	auto memoryRequirements = device.getImageMemoryRequirements(image);
 
 	vk::MemoryAllocateInfo allocateInfo{};
 	allocateInfo.allocationSize = memoryRequirements.size;
 	allocateInfo.memoryTypeIndex = chooseMemoryType(memoryRequirements.memoryTypeBits, properties);
 
-	imageMemory = device.allocateMemory(allocateInfo).value;
+	imageMemory = device.allocateMemory(allocateInfo);
 	static_cast<void>(device.bindImageMemory(image, imageMemory, 0));
 }
 
@@ -427,7 +427,7 @@ vk::CommandBuffer beginSingleTimeCommand() {
 	vk::CommandBufferBeginInfo beginInfo{};
 	beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
 
-	auto commandBuffer = device.allocateCommandBuffers(allocateInfo).value.at(0);
+	auto commandBuffer = device.allocateCommandBuffers(allocateInfo).at(0);
 	static_cast<void>(commandBuffer.begin(beginInfo));
 	return commandBuffer;
 }
@@ -502,8 +502,9 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 		barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
 		sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
 		destinationStage = vk::PipelineStageFlagBits::eTransfer;
-	} else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
-			   newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+	}
+	else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+		newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
 		barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
 		barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
 		sourceStage = vk::PipelineStageFlagBits::eTransfer;
@@ -512,31 +513,31 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 
 	auto commandBuffer = beginSingleTimeCommand();
 	commandBuffer.pipelineBarrier(sourceStage, destinationStage, vk::DependencyFlags{},
-								  0, nullptr, 0, nullptr, 1, &barrier);
+		0, nullptr, 0, nullptr, 1, &barrier);
 	endSingleTimeCommand(commandBuffer);
 }
 
 //TODO: Use continuous memory for images
 svh::Image
-loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t> &data) {
+loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t>& data) {
 	svh::Image image{};
 	svh::Buffer buffer{};
 
 	createBuffer(data.size(), vk::BufferUsageFlagBits::eTransferSrc,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.buffer,
-				 buffer.memory);
+		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.buffer,
+		buffer.memory);
 
-	auto imageData = device.mapMemory(buffer.memory, 0, data.size()).value;
+	auto imageData = device.mapMemory(buffer.memory, 0, data.size());
 	std::memcpy(imageData, data.data(), data.size());
 	device.unmapMemory(buffer.memory);
 
 	createImage(width, height, levels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
-				vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, image.image, image.memory);
+		vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+		vk::MemoryPropertyFlagBits::eDeviceLocal, image.image, image.memory);
 	transitionImageLayout(image.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, levels);
 	copyBufferToImage(buffer.buffer, image.image, width, height);
 	transitionImageLayout(image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-						  levels);
+		levels);
 	image.view = createImageView(image.image, format, vk::ImageAspectFlagBits::eColor, levels);
 
 	device.destroyBuffer(buffer.buffer);
@@ -545,10 +546,10 @@ loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format,
 	return image;
 }
 
-void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 transform) {
-	for (auto &primitive : meshData.primitives) {
-		auto &indexReference = modelData.bufferViews.at(primitive.indices);
-		auto &indexData = modelData.buffers.at(indexReference.buffer);
+void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform) {
+	for (auto& primitive : meshData.primitives) {
+		auto& indexReference = modelData.bufferViews.at(primitive.indices);
+		auto& indexData = modelData.buffers.at(indexReference.buffer);
 
 		svh::Mesh mesh{};
 
@@ -557,29 +558,31 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 
 		indices.resize(mesh.indexOffset + mesh.indexLength);
 		std::memcpy(indices.data() + mesh.indexOffset, indexData.data.data() + indexReference.byteOffset,
-					indexReference.byteLength);
+			indexReference.byteLength);
 
 		std::vector<glm::vec3> positions;
 		std::vector<glm::vec3> normals;
 		std::vector<glm::vec2> texcoords;
 
-		for (auto &attribute : primitive.attributes) {
-			auto &accessor = modelData.accessors.at(attribute.second);
-			auto &primitiveView = modelData.bufferViews.at(accessor.bufferView);
-			auto &primitiveBuffer = modelData.buffers.at(primitiveView.buffer);
+		for (auto& attribute : primitive.attributes) {
+			auto& accessor = modelData.accessors.at(attribute.second);
+			auto& primitiveView = modelData.bufferViews.at(accessor.bufferView);
+			auto& primitiveBuffer = modelData.buffers.at(primitiveView.buffer);
 
 			if (attribute.first.compare("POSITION") == 0) {
 				positions.resize(primitiveView.byteLength / sizeof(glm::vec3));
 				std::memcpy(positions.data(),
-							primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
-			} else if (attribute.first.compare("NORMAL") == 0) {
+					primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+			}
+			else if (attribute.first.compare("NORMAL") == 0) {
 				normals.resize(primitiveView.byteLength / sizeof(glm::vec3));
 				std::memcpy(normals.data(),
-							primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
-			} else if (attribute.first.compare("TEXCOORD_0") == 0) {
+					primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+			}
+			else if (attribute.first.compare("TEXCOORD_0") == 0) {
 				texcoords.resize(primitiveView.byteLength / sizeof(glm::vec2));
 				std::memcpy(texcoords.data(),
-							primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+					primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
 			}
 		}
 
@@ -588,20 +591,20 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 
 		for (auto index = 0u; index < mesh.vertexLength; index++) {
 			svh::Vertex vertex{};
-			vertex.position = transform * glm::vec4{positions.at(index), 1.0f};
-			vertex.normal = transform * glm::vec4{normals.at(index), 0.0f};
+			vertex.position = transform * glm::vec4{ positions.at(index), 1.0f };
+			vertex.normal = transform * glm::vec4{ normals.at(index), 0.0f };
 			vertex.texture = texcoords.at(index);
 			vertices.push_back(vertex);
 		}
 
 		mesh.transform = transform;
 
-		auto &material = modelData.materials.at(primitive.material);
-		for (auto &value : material.values) {
+		auto& material = modelData.materials.at(primitive.material);
+		for (auto& value : material.values) {
 			if (!value.first.compare("baseColorTexture")) {
-				auto &image = modelData.images.at(value.second.TextureIndex());
+				auto& image = modelData.images.at(value.second.TextureIndex());
 				mesh.texture = loadTexture(image.width, image.height, details.mipLevels, details.imageFormat,
-										   image.image);
+					image.image);
 				break;
 			}
 		}
@@ -610,12 +613,14 @@ void loadMesh(tinygltf::Model &modelData, tinygltf::Mesh &meshData, glm::mat4 tr
 	}
 }
 
-void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 transform) {
-	glm::mat4 scale{1.0f}, rotation{1.0f}, translation{1.0f};
+void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform) {
+	glm::mat4 scale{ 1.0f }, rotation{ 1.0f }, translation{ 1.0f };
+
+	//glm::quat lol{ nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2) };
 
 	if (!nodeData.rotation.empty())
 		rotation = glm::toMat4(glm::qua{
-				nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
+			nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
 	for (auto index = 0u; index < nodeData.scale.size(); index++)
 		scale[index][index] = nodeData.scale.at(index);
 	for (auto index = 0u; index < nodeData.translation.size(); index++)
@@ -626,7 +631,7 @@ void loadNode(tinygltf::Model &modelData, tinygltf::Node &nodeData, glm::mat4 tr
 	if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
 		loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform);
 
-	for (auto &childIndex : nodeData.children)
+	for (auto& childIndex : nodeData.children)
 		loadNode(modelData, modelData.nodes.at(childIndex), transform);
 }
 
@@ -645,19 +650,19 @@ void loadModel(std::string filename) {
 		return;
 #endif
 
-	auto &scene = modelData.scenes.at(modelData.defaultScene);
-	for (auto &nodeIndex : scene.nodes)
-		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{1.0f});
+	auto& scene = modelData.scenes.at(modelData.defaultScene);
+	for (auto& nodeIndex : scene.nodes)
+		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f });
 }
 
 void createScene() {
-	observerCamera.position = glm::vec4{0.0f, 10.0f, 10.0f, 1.0f};
-	observerCamera.direction = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f};
-	observerCamera.up = glm::vec4{0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f};
+	observerCamera.position = glm::vec4{ 0.0f, 10.0f, 10.0f, 1.0f };
+	observerCamera.direction = glm::vec4{ 0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f };
+	observerCamera.up = glm::vec4{ 0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f };
 
-	playerCamera.position = glm::vec4{0.0f, 4.0f, 2.0f, 1.0f};
-	playerCamera.direction = glm::vec4{0.0f, -1.0f, 0.0f, 0.0f};
-	playerCamera.up = glm::vec4{0.0f, 0.0f, 1.0f, 0.0f};
+	playerCamera.position = glm::vec4{ 0.0f, 4.0f, 2.0f, 1.0f };
+	playerCamera.direction = glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
+	playerCamera.up = glm::vec4{ 0.0f, 0.0f, 1.0f, 0.0f };
 
 	loadModel("models/Portal.glb");
 	details.portalCount = meshes.size();
@@ -698,7 +703,7 @@ void createRenderPass() {
 	resolveAttachment.initialLayout = vk::ImageLayout::eUndefined;
 	resolveAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
 
-	std::array<vk::AttachmentDescription, 3> attachments{colorAttachment, depthAttachment, resolveAttachment};
+	std::array<vk::AttachmentDescription, 3> attachments{ colorAttachment, depthAttachment, resolveAttachment };
 
 	vk::AttachmentReference colorReference{};
 	colorReference.attachment = 0;
@@ -723,12 +728,12 @@ void createRenderPass() {
 	dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 	dependency.dstSubpass = 0;
 	dependency.srcStageMask =
-			vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+		vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
 	dependency.srcAccessMask = vk::AccessFlags{};
 	dependency.dstStageMask =
-			vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+		vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
 	dependency.dstAccessMask =
-			vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+		vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
 
 	vk::RenderPassCreateInfo renderPassInfo{};
 	renderPassInfo.attachmentCount = attachments.size();
@@ -738,28 +743,28 @@ void createRenderPass() {
 	renderPassInfo.dependencyCount = 1;
 	renderPassInfo.pDependencies = &dependency;
 
-	renderPass = device.createRenderPass(renderPassInfo, nullptr).value;
+	renderPass = device.createRenderPass(renderPassInfo, nullptr);
 }
 
-vk::ShaderModule loadShader(std::string path) {
-	std::ifstream file(path, std::ios::binary | std::ios::ate);
-	auto size = file.tellg();
-	file.seekg(0, std::ios::beg);
+vk::ShaderModule loadShader(std::string name) {
+	auto path = std::filesystem::current_path() / name;
+	auto size = std::filesystem::file_size(path);
+
+	std::ifstream file(name, std::ios::binary);
 	std::vector<uint32_t> data(size / sizeof(uint32_t));
-	file.read(reinterpret_cast<char *>(data.data()), size);
+	file.read(reinterpret_cast<char*>(data.data()), size);
 
 	vk::ShaderModuleCreateInfo shaderInfo{};
 	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
 	shaderInfo.codeSize = size;
 	shaderInfo.pCode = data.data();
 
-	return device.createShaderModule(shaderInfo).value;
+	return device.createShaderModule(shaderInfo);
 }
 
 void createPipelineLayout() {
-	vertexShader = loadShader("shaders/vert.spv");
-	fragmentShader = loadShader("shaders/frag.spv");
-	stencilShader = loadShader("shaders/sten.spv");
+	vertexShader = loadShader("shaders/vertex.spv");
+	fragmentShader = loadShader("shaders/fragment.spv");
 
 	vk::SamplerCreateInfo samplerInfo{};
 	samplerInfo.magFilter = vk::Filter::eLinear;
@@ -778,7 +783,7 @@ void createPipelineLayout() {
 	samplerInfo.minLod = 0.0f;
 	samplerInfo.maxLod = 1.0f;
 
-	sampler = device.createSampler(samplerInfo).value;
+	sampler = device.createSampler(samplerInfo);
 
 	vk::DescriptorSetLayoutBinding uniformLayoutBinding{};
 	uniformLayoutBinding.binding = 0;
@@ -794,13 +799,13 @@ void createPipelineLayout() {
 	samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
 	samplerLayoutBinding.pImmutableSamplers = nullptr;
 
-	std::array<vk::DescriptorSetLayoutBinding, 2> bindings{uniformLayoutBinding, samplerLayoutBinding};
+	std::array<vk::DescriptorSetLayoutBinding, 2> bindings{ uniformLayoutBinding, samplerLayoutBinding };
 
 	vk::DescriptorSetLayoutCreateInfo descriptorInfo{};
 	descriptorInfo.bindingCount = bindings.size();
 	descriptorInfo.pBindings = bindings.data();
 
-	descriptorSetLayout = device.createDescriptorSetLayout(descriptorInfo).value;
+	descriptorSetLayout = device.createDescriptorSetLayout(descriptorInfo);
 
 	vk::PipelineLayoutCreateInfo layoutInfo{};
 	layoutInfo.setLayoutCount = 1;
@@ -808,7 +813,7 @@ void createPipelineLayout() {
 	layoutInfo.pushConstantRangeCount = 0;
 	layoutInfo.pPushConstantRanges = nullptr;
 
-	pipelineLayout = device.createPipelineLayout(layoutInfo).value;
+	pipelineLayout = device.createPipelineLayout(layoutInfo);
 }
 
 void createPipelines() {
@@ -824,7 +829,7 @@ void createPipelines() {
 	fragmentShaderInfo.pName = "main";
 	fragmentShaderInfo.pSpecializationInfo = nullptr;
 
-	std::array<vk::PipelineShaderStageCreateInfo, 2> renderShaderStages{vertexShaderInfo, fragmentShaderInfo};
+	std::array<vk::PipelineShaderStageCreateInfo, 2> renderShaderStages{ vertexShaderInfo, fragmentShaderInfo };
 
 	vk::VertexInputBindingDescription bindingDescription{};
 	bindingDescription.binding = 0;
@@ -850,7 +855,7 @@ void createPipelines() {
 	textureDescription.offset = offsetof(svh::Vertex, texture);
 
 	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{
-			positionDescription, normalDescription, textureDescription};
+			positionDescription, normalDescription, textureDescription };
 
 	vk::PipelineVertexInputStateCreateInfo inputInfo{};
 	inputInfo.vertexBindingDescriptionCount = 1;
@@ -903,9 +908,9 @@ void createPipelines() {
 
 	vk::PipelineColorBlendAttachmentState blendAttachment{};
 	blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
-									 vk::ColorComponentFlagBits::eG |
-									 vk::ColorComponentFlagBits::eB |
-									 vk::ColorComponentFlagBits::eA;
+		vk::ColorComponentFlagBits::eG |
+		vk::ColorComponentFlagBits::eB |
+		vk::ColorComponentFlagBits::eA;
 	blendAttachment.blendEnable = true;
 	blendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
 	blendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
@@ -914,7 +919,7 @@ void createPipelines() {
 	blendAttachment.dstAlphaBlendFactor = vk::BlendFactor::eZero;
 	blendAttachment.alphaBlendOp = vk::BlendOp::eAdd;
 
-	std::array<float_t, 4> blendConstants{0.0f, 0.0f, 0.0f, 0.0f};
+	std::array<float_t, 4> blendConstants{ 0.0f, 0.0f, 0.0f, 0.0f };
 
 	vk::PipelineColorBlendStateCreateInfo blendInfo{};
 	blendInfo.logicOpEnable = VK_FALSE;
@@ -986,19 +991,19 @@ void createPipelines() {
 
 void createFramebuffers() {
 	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
-				details.surfaceFormat.format, vk::ImageTiling::eOptimal,
-				vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.image, colorImage.memory);
+		details.surfaceFormat.format, vk::ImageTiling::eOptimal,
+		vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+		vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.image, colorImage.memory);
 	colorImage.view = createImageView(colorImage.image, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor,
-									  1);
+		1);
 
 	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
-				details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
-				vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.image, depthImage.memory);
+		details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
+		vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.image, depthImage.memory);
 	depthImage.view = createImageView(depthImage.image, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
 
-	for (auto &swapchainView : swapchainViews) {
-		std::array<vk::ImageView, 3> attachments{colorImage.view, depthImage.view, swapchainView};
+	for (auto& swapchainView : swapchainViews) {
+		std::array<vk::ImageView, 3> attachments{ colorImage.view, depthImage.view, swapchainView };
 
 		vk::FramebufferCreateInfo framebufferInfo{};
 		framebufferInfo.renderPass = renderPass;
@@ -1008,7 +1013,7 @@ void createFramebuffers() {
 		framebufferInfo.height = details.swapchainExtent.height;
 		framebufferInfo.layers = 1;
 
-		framebuffers.push_back(device.createFramebuffer(framebufferInfo).value);
+		framebuffers.push_back(device.createFramebuffer(framebufferInfo));
 	}
 }
 
@@ -1017,15 +1022,15 @@ void createElementBuffers() {
 
 	auto indexSize = indices.size() * sizeof(uint16_t);
 	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferSrc,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-				 stagingBuffer.buffer, stagingBuffer.memory);
+		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+		stagingBuffer.buffer, stagingBuffer.memory);
 
-	auto indexData = device.mapMemory(stagingBuffer.memory, 0, indexSize).value;
+	auto indexData = device.mapMemory(stagingBuffer.memory, 0, indexSize);
 	std::memcpy(indexData, indices.data(), indexSize);
 	device.unmapMemory(stagingBuffer.memory);
 
 	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.buffer, indexBuffer.memory);
+		vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer.buffer, indexBuffer.memory);
 	copyBuffer(stagingBuffer.buffer, indexBuffer.buffer, indexSize);
 
 	device.destroyBuffer(stagingBuffer.buffer);
@@ -1033,15 +1038,15 @@ void createElementBuffers() {
 
 	auto vertexSize = vertices.size() * sizeof(svh::Vertex);
 	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferSrc,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-				 stagingBuffer.buffer, stagingBuffer.memory);
+		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+		stagingBuffer.buffer, stagingBuffer.memory);
 
-	auto vertexData = device.mapMemory(stagingBuffer.memory, 0, vertexSize).value;
+	auto vertexData = device.mapMemory(stagingBuffer.memory, 0, vertexSize);
 	std::memcpy(vertexData, vertices.data(), vertexSize);
 	device.unmapMemory(stagingBuffer.memory);
 
 	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-				 vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.buffer, vertexBuffer.memory);
+		vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer.buffer, vertexBuffer.memory);
 	copyBuffer(stagingBuffer.buffer, vertexBuffer.buffer, vertexSize);
 
 	device.destroyBuffer(stagingBuffer.buffer);
@@ -1050,8 +1055,8 @@ void createElementBuffers() {
 	details.uniformStride = (details.portalCount + 1) * details.uniformAlignment;
 	details.uniformSize = details.imageCount * details.uniformStride;
 	createBuffer(details.uniformSize, vk::BufferUsageFlagBits::eUniformBuffer,
-				 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-				 uniformBuffer.buffer, uniformBuffer.memory);
+		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+		uniformBuffer.buffer, uniformBuffer.memory);
 }
 
 void createDescriptorSets() {
@@ -1063,24 +1068,24 @@ void createDescriptorSets() {
 	samplerSize.type = vk::DescriptorType::eCombinedImageSampler;
 	samplerSize.descriptorCount = details.meshCount;
 
-	std::array<vk::DescriptorPoolSize, 2> poolSizes{uniformSize, samplerSize};
+	std::array<vk::DescriptorPoolSize, 2> poolSizes{ uniformSize, samplerSize };
 
 	vk::DescriptorPoolCreateInfo poolInfo{};
 	poolInfo.poolSizeCount = poolSizes.size();
 	poolInfo.pPoolSizes = poolSizes.data();
 	poolInfo.maxSets = details.meshCount;
 
-	descriptorPool = device.createDescriptorPool(poolInfo).value;
+	descriptorPool = device.createDescriptorPool(poolInfo);
 
-	for (auto &mesh : meshes) {
-		std::vector<vk::DescriptorSetLayout> layouts{details.meshCount, descriptorSetLayout};
+	for (auto& mesh : meshes) {
+		std::vector<vk::DescriptorSetLayout> layouts{ details.meshCount, descriptorSetLayout };
 
 		vk::DescriptorSetAllocateInfo allocateInfo{};
 		allocateInfo.descriptorPool = descriptorPool;
 		allocateInfo.descriptorSetCount = 1;
 		allocateInfo.pSetLayouts = &descriptorSetLayout;
 
-		mesh.descriptorSet = device.allocateDescriptorSets(allocateInfo).value.front();
+		mesh.descriptorSet = device.allocateDescriptorSets(allocateInfo).front();
 
 		vk::DescriptorBufferInfo uniformInfo{};
 		uniformInfo.buffer = uniformBuffer.buffer;
@@ -1112,7 +1117,7 @@ void createDescriptorSets() {
 		samplerWrite.pImageInfo = &samplerInfo;
 		samplerWrite.pTexelBufferView = nullptr;
 
-		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{uniformWrite, samplerWrite};
+		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{ uniformWrite, samplerWrite };
 		device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
 	}
 }
@@ -1124,10 +1129,10 @@ void createCommandBuffers() {
 	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
 	allocateInfo.commandBufferCount = details.imageCount;
 
-	commandBuffers = device.allocateCommandBuffers(allocateInfo).value;
+	commandBuffers = device.allocateCommandBuffers(allocateInfo);
 
 	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
-		auto &commandBuffer = commandBuffers.at(imageIndex);
+		auto& commandBuffer = commandBuffers.at(imageIndex);
 		auto uniformOffset = imageIndex * details.uniformStride + details.portalCount * details.uniformAlignment;
 
 		vk::DeviceSize bufferOffset = 0;
@@ -1146,7 +1151,7 @@ void createCommandBuffers() {
 		depthStencilClear.depthStencil.depth = 1.0f;
 		depthStencilClear.depthStencil.stencil = 0;
 
-		std::array<vk::ClearValue, 2> clearValues{colorClear, depthStencilClear};
+		std::array<vk::ClearValue, 2> clearValues{ colorClear, depthStencilClear };
 
 		vk::Rect2D rect{};
 		rect.offset = areaOffset;
@@ -1181,35 +1186,35 @@ void createCommandBuffers() {
 		commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
 		for (auto meshIndex = details.portalCount; meshIndex < details.meshCount; meshIndex++) {
-			auto &mesh = meshes.at(meshIndex);
+			auto& mesh = meshes.at(meshIndex);
 
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-											 &mesh.descriptorSet, 1, &uniformOffset);
+				&mesh.descriptorSet, 1, &uniformOffset);
 			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
 
 		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-			auto &portal = meshes.at(portalIndex);
+			auto& portal = meshes.at(portalIndex);
 
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-											 &portal.descriptorSet, 1, &uniformOffset);
+				&portal.descriptorSet, 1, &uniformOffset);
 			commandBuffer.drawIndexed(portal.indexLength, 1, portal.indexOffset, portal.vertexOffset, 0);
 		}
 
 		commandBuffer.clearAttachments(1, &clearAttachment, 1, &clearRect);
 
 		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-			auto &portal = meshes.at(portalIndex);
+			auto& portal = meshes.at(portalIndex);
 			uniformOffset = imageIndex * details.uniformStride + portalIndex * details.uniformAlignment;
 
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
 			for (auto meshIndex = details.portalCount; meshIndex < details.meshCount; meshIndex++) {
-				auto &mesh = meshes.at(meshIndex);
+				auto& mesh = meshes.at(meshIndex);
 
 				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-												 &mesh.descriptorSet, 1, &uniformOffset);
+					&mesh.descriptorSet, 1, &uniformOffset);
 				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 			}
 		}
@@ -1226,10 +1231,10 @@ void createSyncObject() {
 	vk::SemaphoreCreateInfo semaphoreInfo{};
 
 	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
-		frameFences.push_back(device.createFence(fenceInfo).value);
+		frameFences.push_back(device.createFence(fenceInfo));
 		orderFences.push_back(nullptr);
-		availableSemaphores.push_back(device.createSemaphore(semaphoreInfo).value);
-		finishedSemaphores.push_back(device.createSemaphore(semaphoreInfo).value);
+		availableSemaphores.push_back(device.createSemaphore(semaphoreInfo));
+		finishedSemaphores.push_back(device.createSemaphore(semaphoreInfo));
 	}
 }
 
@@ -1262,62 +1267,63 @@ void updateScene(uint32_t imageIndex) {
 
 		if (controls.keyW || controls.keyS)
 			observerCamera.position += (controls.keyW - controls.keyS) * moveDelta *
-									   (observerCamera.direction + observerCamera.up) / std::sqrt(2.0f);
+			(observerCamera.direction + observerCamera.up) / std::sqrt(2.0f);
 		if (controls.keyA || controls.keyD)
 			observerCamera.position += (controls.keyA - controls.keyD) * moveDelta * left;
 		if (controls.keyR || controls.keyF)
 			observerCamera.position += (controls.keyR - controls.keyF) * moveDelta * observerCamera.direction;
 		if (controls.keyQ || controls.keyE) {
-			glm::mat4 rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{0.0f, 0.0f, 1.0f});
+			glm::mat4 rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{ 0.0f, 0.0f, 1.0f });
 
-			auto direction = glm::normalize(glm::vec2{observerCamera.direction});
-			observerCamera.position += observerCamera.position.z * glm::vec3{direction, 0.0f};
-			observerCamera.direction = rotation * glm::vec4{observerCamera.direction, 0.0f};
+			auto direction = glm::normalize(glm::vec2{ observerCamera.direction });
+			observerCamera.position += observerCamera.position.z * glm::vec3{ direction, 0.0f };
+			observerCamera.direction = rotation * glm::vec4{ observerCamera.direction, 0.0f };
 
-			direction = glm::normalize(glm::vec2{observerCamera.direction});
-			observerCamera.position -= observerCamera.position.z * glm::vec3{direction, 0.0f};
-			observerCamera.up = rotation * glm::vec4{observerCamera.up, 0.0f};
+			direction = glm::normalize(glm::vec2{ observerCamera.direction });
+			observerCamera.position -= observerCamera.position.z * glm::vec3{ direction, 0.0f };
+			observerCamera.up = rotation * glm::vec4{ observerCamera.up, 0.0f };
 		}
-	} else {
+	}
+	else {
 		auto left = glm::normalize(glm::cross(playerCamera.up, playerCamera.direction));
 
-		playerCamera.direction = glm::normalize(glm::vec3{glm::rotate(turnDelta * controls.deltaY, left) *
+		playerCamera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
 														  glm::rotate(turnDelta * controls.deltaX, playerCamera.up) *
-														  glm::vec4{playerCamera.direction, 0.0f}});
+														  glm::vec4{playerCamera.direction, 0.0f} });
 
 		left = glm::normalize(glm::cross(playerCamera.up, playerCamera.direction));
 
 		playerCamera.position += moveDelta * (controls.keyW - controls.keyS) * playerCamera.direction +
-								 moveDelta * (controls.keyA - controls.keyD) * left;
+			moveDelta * (controls.keyA - controls.keyD) * left;
 
 		controls.deltaX = 0.0f;
 		controls.deltaY = 0.0f;
 	}
 
-	auto &camera = controls.observer ? observerCamera : playerCamera;
+	auto& camera = controls.observer ? observerCamera : playerCamera;
 	auto projection = glm::perspective(glm::radians(45.0f),
-									   static_cast<float_t>(details.swapchainExtent.width) /
-									   static_cast<float_t>(details.swapchainExtent.height), 0.01f, 100.0f);
+		static_cast<float_t>(details.swapchainExtent.width) /
+		static_cast<float_t>(details.swapchainExtent.height), 0.01f, 100.0f);
 	projection[1][1] *= -1;
 
-	auto data = static_cast<uint8_t *>(device.mapMemory(uniformBuffer.memory, imageIndex * details.uniformStride,
-														details.uniformStride).value);
+	auto data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, imageIndex * details.uniformStride,
+		details.uniformStride));
 	auto transform = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
 	std::memcpy(data + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-		auto &sourceTransform = meshes.at(portalIndex).transform,
-				&destinationTransform = meshes.at(portalIndex + 1 - portalIndex % 2 * 2).transform;
-		auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{0.0f, 0.0f, 1.0f}) *
-							   glm::inverse(destinationTransform);
+		auto& sourceTransform = meshes.at(portalIndex).transform,
+			& destinationTransform = meshes.at(portalIndex + 1 - portalIndex % 2 * 2).transform;
+		auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) *
+			glm::inverse(destinationTransform);
 
 		svh::Camera portalCamera{};
-		portalCamera.position = cameraTransform * glm::vec4{camera.position, 1.0f};
-		portalCamera.direction = cameraTransform * glm::vec4{camera.direction, 0.0f};
-		portalCamera.up = cameraTransform * glm::vec4{camera.up, 0.0f};
+		portalCamera.position = cameraTransform * glm::vec4{ camera.position, 1.0f };
+		portalCamera.direction = cameraTransform * glm::vec4{ camera.direction, 0.0f };
+		portalCamera.up = cameraTransform * glm::vec4{ camera.up, 0.0f };
 
 		transform = projection *
-					glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
+			glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
 		std::memcpy(data + portalIndex * details.uniformAlignment, &transform, sizeof(glm::mat4));
 	}
 
@@ -1336,24 +1342,24 @@ void draw() {
 		state.previousTime = state.currentTime;
 		state.currentTime = std::chrono::high_resolution_clock::now();
 		state.timeDelta = std::chrono::duration<float, std::chrono::seconds::period>(
-				state.currentTime - state.previousTime).count();
+			state.currentTime - state.previousTime).count();
 		state.checkPoint += state.timeDelta;
 		state.frameCount++;
 
 		static_cast<void>(device.waitForFences(1, &frameFences[state.currentImage], true,
-											   std::numeric_limits<uint64_t>::max()));
+			std::numeric_limits<uint64_t>::max()));
 		auto imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(),
-													 availableSemaphores.at(state.currentImage), nullptr).value;
+			availableSemaphores.at(state.currentImage), nullptr).value;
 
 		if (orderFences.at(imageIndex))
 			static_cast<void>(device.waitForFences(1, &orderFences.at(imageIndex), true,
-												   std::numeric_limits<uint64_t>::max()));
+				std::numeric_limits<uint64_t>::max()));
 
 		orderFences.at(imageIndex) = frameFences.at(state.currentImage);
 
-		std::array<vk::Semaphore, 1> waitSemaphores{availableSemaphores[state.currentImage]};
-		std::array<vk::Semaphore, 1> signalSemaphores{finishedSemaphores[state.currentImage]};
-		std::array<vk::PipelineStageFlags, 1> waitStages{vk::PipelineStageFlagBits::eColorAttachmentOutput};
+		std::array<vk::Semaphore, 1> waitSemaphores{ availableSemaphores[state.currentImage] };
+		std::array<vk::Semaphore, 1> signalSemaphores{ finishedSemaphores[state.currentImage] };
+		std::array<vk::PipelineStageFlags, 1> waitStages{ vk::PipelineStageFlagBits::eColorAttachmentOutput };
 
 		updateScene(state.currentImage);
 
@@ -1392,11 +1398,11 @@ void draw() {
 }
 
 void clear() {
-	for (auto &finishedSemaphore : finishedSemaphores)
+	for (auto& finishedSemaphore : finishedSemaphores)
 		device.destroySemaphore(finishedSemaphore);
-	for (auto &availableSemaphore : availableSemaphores)
+	for (auto& availableSemaphore : availableSemaphores)
 		device.destroySemaphore(availableSemaphore);
-	for (auto &frameFence : frameFences)
+	for (auto& frameFence : frameFences)
 		device.destroyFence(frameFence);
 	device.destroyDescriptorPool(descriptorPool);
 	device.destroyBuffer(uniformBuffer.buffer);
@@ -1405,7 +1411,7 @@ void clear() {
 	device.freeMemory(vertexBuffer.memory);
 	device.destroyBuffer(indexBuffer.buffer);
 	device.freeMemory(indexBuffer.memory);
-	for (auto &swapchainFramebuffer : framebuffers)
+	for (auto& swapchainFramebuffer : framebuffers)
 		device.destroyFramebuffer(swapchainFramebuffer);
 	device.destroyImageView(colorImage.view);
 	device.destroyImage(colorImage.image);
@@ -1413,7 +1419,7 @@ void clear() {
 	device.destroyImageView(depthImage.view);
 	device.destroyImage(depthImage.image);
 	device.freeMemory(depthImage.memory);
-	for (auto &mesh : meshes) {
+	for (auto& mesh : meshes) {
 		device.destroyPipeline(mesh.renderPipeline);
 		device.destroyPipeline(mesh.stencilPipeline);
 		device.destroyImageView(mesh.texture.view);
@@ -1428,7 +1434,7 @@ void clear() {
 	device.destroyShaderModule(fragmentShader);
 	device.destroyShaderModule(vertexShader);
 	device.destroyRenderPass(renderPass);
-	for (auto &swapchainView : swapchainViews)
+	for (auto& swapchainView : swapchainViews)
 		device.destroyImageView(swapchainView);
 	device.destroySwapchainKHR(swapchain);
 	device.destroyCommandPool(commandPool);

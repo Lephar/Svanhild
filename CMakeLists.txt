@@ -1,19 +1,28 @@
-cmake_minimum_required(VERSION 3.17)
-project(Svanhild)
-
+﻿cmake_minimum_required(VERSION 3.18)
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 17)
 
-file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/shaders)
-add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/shaders/vert.spv COMMAND glslc ${PROJECT_SOURCE_DIR}/shaders/vertex.vert -o ${PROJECT_BINARY_DIR}/shaders/vert.spv -O)
-add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/shaders/frag.spv COMMAND glslc ${PROJECT_SOURCE_DIR}/shaders/fragment.frag -o ${PROJECT_BINARY_DIR}/shaders/frag.spv -O)
-add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/shaders/sten.spv COMMAND glslc ${PROJECT_SOURCE_DIR}/shaders/stencil.frag -o ${PROJECT_BINARY_DIR}/shaders/sten.spv -O)
-add_custom_target(Shaders ALL DEPENDS ${PROJECT_BINARY_DIR}/shaders/vert.spv ${PROJECT_BINARY_DIR}/shaders/frag.spv ${PROJECT_BINARY_DIR}/shaders/sten.spv)
+project (Svanhild)
 
-file(COPY ${PROJECT_SOURCE_DIR}/models DESTINATION ${PROJECT_BINARY_DIR})
+add_custom_command(OUTPUT shaders/vertex.spv COMMAND glslc shaders/vertex.vert -o shaders/vertex.spv -O)
+add_custom_command(OUTPUT shaders/fragment.spv COMMAND glslc shaders/fragment.frag -o shaders/fragment.spv -O)
+file(COPY models shaders DESTINATION ${PROJECT_BINARY_DIR})
+
+add_custom_target(Shaders ALL DEPENDS ${PROJECT_BINARY_DIR}/shaders/vertex.spv ${PROJECT_BINARY_DIR}/shaders/fragment.spv)
 add_custom_target(Models ALL DEPENDS ${PROJECT_BINARY_DIR}/models)
 
-add_executable(Svanhild Main.cpp)
-add_dependencies(Svanhild Shaders)
-target_precompile_headers(Svanhild PRIVATE Svanhild.hpp)
-target_include_directories(Svanhild PRIVATE headers)
-target_link_libraries(Svanhild glfw vulkan)
+add_executable(Svanhild Svanhild.cpp Svanhild.hpp)
+add_dependencies(Svanhild Shaders Models)
+
+if(WIN32)
+	find_package(Vulkan REQUIRED)
+	target_include_directories(Svanhild PRIVATE Vulkan::Vulkan headers)
+	target_link_libraries(Svanhild Vulkan::Vulkan ${PROJECT_SOURCE_DIR}/libraries/GLFW/glfw3.lib)
+	add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
+if(UNIX AND NOT APPLE)
+	target_precompile_headers(Svanhild PRIVATE Svanhild.hpp)
+	target_include_directories(Svanhild PRIVATE headers)
+	target_link_libraries(Svanhild glfw vulkan)
+endif()
