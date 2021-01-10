@@ -15,6 +15,7 @@
 #include <filesystem>
 
 #include <glm/glm.hpp>
+#include <glm/gtx/intersect.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -23,6 +24,15 @@
 #include <GLFW/glfw3.h>
 
 namespace svh {
+	constexpr auto epsilon = 0.0009765625f;
+
+	enum class Type {
+		Model,
+		Portal,
+		Player,
+		Observer
+	};
+
 	struct Controls {
 		uint8_t observer;
 		double_t mouseX;
@@ -94,8 +104,14 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
-		glm::mat4 transform;
 		Image texture;
+
+		//Portal:
+		glm::vec3 origin;
+		glm::vec3 normal;
+		glm::vec3 minBorders;
+		glm::vec3 maxBorders;
+		glm::mat4 transform;
 		vk::DescriptorSet descriptorSet;
 		vk::Pipeline stencilPipeline;
 		vk::Pipeline renderPipeline;

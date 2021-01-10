@@ -1,11 +1,11 @@
 ﻿#include "Svanhild.hpp"
 
 GLFWwindow* window;
+tinygltf::TinyGLTF objectLoader;
 svh::Controls controls;
 svh::State state;
 svh::Camera observerCamera, playerCamera;
-tinygltf::TinyGLTF objectLoader;
-
+glm::vec3 previousPosition;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
 std::vector<svh::Mesh> meshes;
@@ -40,9 +40,7 @@ vk::DebugUtilsMessengerEXT messenger;
 vk::DispatchLoaderDynamic functionLoader;
 
 VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-	VkDebugUtilsMessageTypeFlagsEXT type,
-	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-	void* pUserData) {
+	VkDebugUtilsMessageTypeFlagsEXT type, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
 	static_cast<void>(type);
 	static_cast<void>(pUserData);
 
@@ -106,9 +104,9 @@ void keyboardCallback(GLFWwindow* handle, int key, int scancode, int action, int
 			glfwSetWindowShouldClose(handle, 1);
 		else if (key == GLFW_KEY_TAB) {
 			if (controls.observer)
-				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				glfwSetInputMode(handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 			else
-				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+				glfwSetInputMode(handle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			controls.observer = !controls.observer;
 		}
 	}
@@ -265,11 +263,9 @@ svh::Details generateDetails() {
 	glfwGetFramebufferSize(window, reinterpret_cast<int*>(&surfaceCapabilities.currentExtent.width),
 		reinterpret_cast<int*>(&surfaceCapabilities.currentExtent.height));
 	surfaceCapabilities.currentExtent.width = std::max(surfaceCapabilities.minImageExtent.width,
-		std::min(surfaceCapabilities.maxImageExtent.width,
-			surfaceCapabilities.currentExtent.width));
+		std::min(surfaceCapabilities.maxImageExtent.width, surfaceCapabilities.currentExtent.width));
 	surfaceCapabilities.currentExtent.height = std::max(surfaceCapabilities.minImageExtent.height,
-		std::min(surfaceCapabilities.maxImageExtent.height,
-			surfaceCapabilities.currentExtent.height));
+		std::min(surfaceCapabilities.maxImageExtent.height, surfaceCapabilities.currentExtent.height));
 
 	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
@@ -279,8 +275,7 @@ svh::Details generateDetails() {
 	temporaryDetails.surfaceFormat = surfaceFormats.front();
 
 	for (auto& surfaceFormat : surfaceFormats)
-		if (surfaceFormat.format == vk::Format::eB8G8R8A8Srgb &&
-			surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+		if (surfaceFormat.format == vk::Format::eB8G8R8A8Srgb && surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
 			temporaryDetails.surfaceFormat = surfaceFormat;
 
 	auto presentModes = physicalDevice.getSurfacePresentModesKHR(surface);
@@ -358,8 +353,7 @@ void createSwapchain() {
 	details.imageCount = swapchainImages.size();
 
 	for (auto& swapchainImage : swapchainImages)
-		swapchainViews.push_back(
-			createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
+		swapchainViews.push_back(createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
 }
 
 uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
@@ -524,8 +518,7 @@ loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format,
 	svh::Buffer buffer{};
 
 	createBuffer(data.size(), vk::BufferUsageFlagBits::eTransferSrc,
-		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.buffer,
-		buffer.memory);
+		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.buffer, buffer.memory);
 
 	auto imageData = device.mapMemory(buffer.memory, 0, data.size());
 	std::memcpy(imageData, data.data(), data.size());
@@ -536,8 +529,7 @@ loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format,
 		vk::MemoryPropertyFlagBits::eDeviceLocal, image.image, image.memory);
 	transitionImageLayout(image.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, levels);
 	copyBufferToImage(buffer.buffer, image.image, width, height);
-	transitionImageLayout(image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-		levels);
+	transitionImageLayout(image.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, levels);
 	image.view = createImageView(image.image, format, vk::ImageAspectFlagBits::eColor, levels);
 
 	device.destroyBuffer(buffer.buffer);
@@ -546,7 +538,7 @@ loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format,
 	return image;
 }
 
-void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform) {
+void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform, svh::Type type) {
 	for (auto& primitive : meshData.primitives) {
 		auto& indexReference = modelData.bufferViews.at(primitive.indices);
 		auto& indexData = modelData.buffers.at(indexReference.buffer);
@@ -557,8 +549,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 		mesh.indexLength = indexReference.byteLength / sizeof(uint16_t);
 
 		indices.resize(mesh.indexOffset + mesh.indexLength);
-		std::memcpy(indices.data() + mesh.indexOffset, indexData.data.data() + indexReference.byteOffset,
-			indexReference.byteLength);
+		std::memcpy(indices.data() + mesh.indexOffset, indexData.data.data() + indexReference.byteOffset, indexReference.byteLength);
 
 		std::vector<glm::vec3> positions;
 		std::vector<glm::vec3> normals;
@@ -571,24 +562,21 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 
 			if (attribute.first.compare("POSITION") == 0) {
 				positions.resize(primitiveView.byteLength / sizeof(glm::vec3));
-				std::memcpy(positions.data(),
-					primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+				std::memcpy(positions.data(), primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
 			}
 			else if (attribute.first.compare("NORMAL") == 0) {
 				normals.resize(primitiveView.byteLength / sizeof(glm::vec3));
-				std::memcpy(normals.data(),
-					primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+				std::memcpy(normals.data(), primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
 			}
 			else if (attribute.first.compare("TEXCOORD_0") == 0) {
 				texcoords.resize(primitiveView.byteLength / sizeof(glm::vec2));
-				std::memcpy(texcoords.data(),
-					primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
+				std::memcpy(texcoords.data(), primitiveBuffer.data.data() + primitiveView.byteOffset, primitiveView.byteLength);
 			}
 		}
 
 		mesh.vertexOffset = vertices.size();
 		mesh.vertexLength = texcoords.size();
-
+		
 		for (auto index = 0u; index < mesh.vertexLength; index++) {
 			svh::Vertex vertex{};
 			vertex.position = transform * glm::vec4{ positions.at(index), 1.0f };
@@ -597,28 +585,53 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			vertices.push_back(vertex);
 		}
 
-		mesh.transform = transform;
-
 		auto& material = modelData.materials.at(primitive.material);
 		for (auto& value : material.values) {
 			if (!value.first.compare("baseColorTexture")) {
 				auto& image = modelData.images.at(value.second.TextureIndex());
-				mesh.texture = loadTexture(image.width, image.height, details.mipLevels, details.imageFormat,
-					image.image);
+				mesh.texture = loadTexture(image.width, image.height, details.mipLevels, details.imageFormat, image.image);
 				break;
 			}
 		}
 
+		if (type == svh::Type::Portal) {
+			auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
+			auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ std::numeric_limits<float_t>::min() };
+
+			for (auto index = 0u; index < mesh.vertexLength; index++) {
+				auto& vertex = vertices.at(mesh.vertexOffset + index);
+
+				origin += vertex.position;
+				normal += vertex.normal;
+
+				min.x = std::min(min.x, vertex.position.x);
+				min.y = std::min(min.y, vertex.position.y);
+				min.z = std::min(min.z, vertex.position.z);
+
+				max.x = std::max(max.x, vertex.position.x);
+				max.y = std::max(max.y, vertex.position.y);
+				max.z = std::max(max.z, vertex.position.z);
+			}
+
+			mesh.origin = origin / static_cast<float_t>(mesh.vertexLength);
+			mesh.normal = glm::normalize(normal);
+			mesh.minBorders = min;
+			mesh.maxBorders = max;
+			mesh.transform = transform;
+
+			details.portalCount++;
+		}
+
+		details.meshCount++;
 		meshes.push_back(mesh);
 	}
 }
 
-void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform) {
+void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform, svh::Type type) {
 	glm::mat4 scale{ 1.0f }, rotation{ 1.0f }, translation{ 1.0f };
 
 	if (!nodeData.rotation.empty())
-		rotation = glm::toMat4(glm::qua{
-			nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
+		rotation = glm::toMat4(glm::qua{nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
 	for (auto index = 0u; index < nodeData.scale.size(); index++)
 		scale[index][index] = nodeData.scale.at(index);
 	for (auto index = 0u; index < nodeData.translation.size(); index++)
@@ -626,18 +639,31 @@ void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 tr
 
 	transform = transform * translation * rotation * scale;
 
-	if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
-		loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform);
+	if (type == svh::Type::Player || type == svh::Type::Observer) {
+		auto& camera = type == svh::Type::Observer ? observerCamera : playerCamera;
 
-	for (auto& childIndex : nodeData.children)
-		loadNode(modelData, modelData.nodes.at(childIndex), transform);
+		camera.position = transform * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
+		camera.direction = transform * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
+		camera.up = transform * glm::vec4{ 0.0f, 0.0f, 1.0f, 0.0f };
+
+		if (type == svh::Type::Player)
+			previousPosition = playerCamera.position;
+	}
+
+	else {
+		if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
+			loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform, type);
+
+		for (auto& childIndex : nodeData.children)
+			loadNode(modelData, modelData.nodes.at(childIndex), transform, type);
+	}
 }
 
-void loadModel(std::string filename) {
+void loadModel(std::string filename, svh::Type type) {
 	std::string error, warning;
 	tinygltf::Model modelData;
 
-	auto result = objectLoader.LoadBinaryFromFile(&modelData, &error, &warning, filename);
+	auto result = objectLoader.LoadBinaryFromFile(&modelData, &error, &warning, "models/" + filename);
 
 #ifndef NDEBUG
 	if (!warning.empty())
@@ -650,24 +676,15 @@ void loadModel(std::string filename) {
 
 	auto& scene = modelData.scenes.at(modelData.defaultScene);
 	for (auto& nodeIndex : scene.nodes)
-		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f });
+		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type);
 }
 
 void createScene() {
-	observerCamera.position = glm::vec4{ 0.0f, 10.0f, 10.0f, 1.0f };
-	observerCamera.direction = glm::vec4{ 0.0f, -std::sqrt(2.0f) / 2.0f, -std::sqrt(2.0f) / 2.0f, 0.0f };
-	observerCamera.up = glm::vec4{ 0.0f, -std::sqrt(2.0f) / 2.0f, std::sqrt(2.0f) / 2.0f, 0.0f };
-
-	playerCamera.position = glm::vec4{ 0.0f, 4.0f, 2.0f, 1.0f };
-	playerCamera.direction = glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
-	playerCamera.up = glm::vec4{ 0.0f, 0.0f, 1.0f, 0.0f };
-
-	loadModel("models/Portal.glb");
-	details.portalCount = meshes.size();
-
-	loadModel("models/Room1.glb");
-	loadModel("models/Room2.glb");
-	details.meshCount = meshes.size();
+	loadModel("Observer.glb", svh::Type::Observer);
+	loadModel("Player.glb", svh::Type::Player);
+	loadModel("Portal.glb", svh::Type::Portal);
+	loadModel("Room1.glb", svh::Type::Model);
+	loadModel("Room2.glb", svh::Type::Model);
 }
 
 void createRenderPass() {
@@ -725,13 +742,10 @@ void createRenderPass() {
 	vk::SubpassDependency dependency{};
 	dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 	dependency.dstSubpass = 0;
-	dependency.srcStageMask =
-		vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+	dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
 	dependency.srcAccessMask = vk::AccessFlags{};
-	dependency.dstStageMask =
-		vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
-	dependency.dstAccessMask =
-		vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+	dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+	dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
 
 	vk::RenderPassCreateInfo renderPassInfo{};
 	renderPassInfo.attachmentCount = attachments.size();
@@ -852,8 +866,7 @@ void createPipelines() {
 	textureDescription.format = vk::Format::eR32G32Sfloat;
 	textureDescription.offset = offsetof(svh::Vertex, texture);
 
-	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{
-			positionDescription, normalDescription, textureDescription };
+	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{ positionDescription, normalDescription, textureDescription };
 
 	vk::PipelineVertexInputStateCreateInfo inputInfo{};
 	inputInfo.vertexBindingDescriptionCount = 1;
@@ -992,8 +1005,7 @@ void createFramebuffers() {
 		details.surfaceFormat.format, vk::ImageTiling::eOptimal,
 		vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
 		vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.image, colorImage.memory);
-	colorImage.view = createImageView(colorImage.image, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor,
-		1);
+	colorImage.view = createImageView(colorImage.image, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1);
 
 	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
 		details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
@@ -1253,75 +1265,102 @@ void setup() {
 
 //TODO: Remove constant memory map-unmaps
 void updateScene(uint32_t imageIndex) {
-	auto moveDelta = state.timeDelta * 12.0f, turnDelta = state.timeDelta * glm::radians(90.0f);
+	auto moveDelta = state.timeDelta * 12.0f, turnDelta = state.timeDelta * glm::radians(120.0f);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
+	auto& camera = controls.observer ? observerCamera : playerCamera;
 
 	if (vectorCount > 0)
 		moveDelta /= std::sqrt(vectorCount);
 
-	//TODO: Refactor here like the player camera
 	if (controls.observer) {
-		auto left = glm::normalize(glm::cross(observerCamera.up, observerCamera.direction));
+		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
 
 		if (controls.keyW || controls.keyS)
-			observerCamera.position += (controls.keyW - controls.keyS) * moveDelta *
-			(observerCamera.direction + observerCamera.up) / std::sqrt(2.0f);
+			camera.position += (controls.keyW - controls.keyS) * moveDelta * glm::normalize(camera.direction + camera.up);
 		if (controls.keyA || controls.keyD)
-			observerCamera.position += (controls.keyA - controls.keyD) * moveDelta * left;
+			camera.position += (controls.keyA - controls.keyD) * moveDelta * left;
 		if (controls.keyR || controls.keyF)
-			observerCamera.position += (controls.keyR - controls.keyF) * moveDelta * observerCamera.direction;
+			camera.position += (controls.keyR - controls.keyF) * moveDelta * camera.direction;
 		if (controls.keyQ || controls.keyE) {
-			glm::mat4 rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{ 0.0f, 0.0f, 1.0f });
+			auto rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{ 0.0f, 0.0f, 1.0f });
 
-			auto direction = glm::normalize(glm::vec2{ observerCamera.direction });
-			observerCamera.position += observerCamera.position.z * glm::vec3{ direction, 0.0f };
-			observerCamera.direction = rotation * glm::vec4{ observerCamera.direction, 0.0f };
+			auto direction = glm::normalize(glm::vec2{ camera.direction });
+			camera.position += camera.position.z * glm::vec3{ direction, 0.0f };
+			camera.direction = rotation * glm::vec4{ camera.direction, 0.0f };
 
-			direction = glm::normalize(glm::vec2{ observerCamera.direction });
-			observerCamera.position -= observerCamera.position.z * glm::vec3{ direction, 0.0f };
-			observerCamera.up = rotation * glm::vec4{ observerCamera.up, 0.0f };
+			direction = glm::normalize(glm::vec2{ camera.direction });
+			camera.position -= camera.position.z * glm::vec3{ direction, 0.0f };
+			camera.up = rotation * glm::vec4{ camera.up, 0.0f };
 		}
-	}
-	else {
-		auto left = glm::normalize(glm::cross(playerCamera.up, playerCamera.direction));
+	} else {
+		previousPosition = camera.position;
 
-		playerCamera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
-														  glm::rotate(turnDelta * controls.deltaX, playerCamera.up) *
-														  glm::vec4{playerCamera.direction, 0.0f} });
+		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
 
-		left = glm::normalize(glm::cross(playerCamera.up, playerCamera.direction));
+		camera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
+														  glm::rotate(turnDelta * controls.deltaX, camera.up) *
+														  glm::vec4{camera.direction, 0.0f} });
 
-		playerCamera.position += moveDelta * (controls.keyW - controls.keyS) * playerCamera.direction +
+		left = glm::normalize(glm::cross(camera.up, camera.direction));
+
+		camera.position += moveDelta * (controls.keyW - controls.keyS) * camera.direction +
 			moveDelta * (controls.keyA - controls.keyD) * left;
 
 		controls.deltaX = 0.0f;
 		controls.deltaY = 0.0f;
+
+		auto coefficient = 0.0f, distance = glm::length(camera.position - previousPosition);
+		auto direction = glm::normalize(camera.position - previousPosition);
+		
+		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
+			auto& portal = meshes.at(portalIndex);
+
+			if (svh::epsilon < distance && glm::intersectRayPlane(previousPosition, direction, portal.origin, portal.normal, coefficient)) {
+				auto point = previousPosition + coefficient * direction;
+					
+				if (point.x >= portal.minBorders.x && point.y >= portal.minBorders.y && point.z >= portal.minBorders.z &&
+					point.x <= portal.maxBorders.x && point.y <= portal.maxBorders.y && point.z <= portal.maxBorders.z &&
+					0 <= coefficient && distance >= coefficient) {
+
+					std::cout << coefficient << " " << distance << std::endl;
+					std::cout << portalIndex << std::endl;
+
+					//TODO: Get rid of duplicate transforms
+					auto& sourceTransform = meshes.at(portalIndex).transform,
+						& destinationTransform = meshes.at(portalIndex + 1 - portalIndex % 2 * 2).transform;
+					auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(destinationTransform);
+
+					camera.position = cameraTransform * glm::vec4{ camera.position, 1.0f };
+					camera.direction = cameraTransform * glm::vec4{ camera.direction, 0.0f };
+					camera.up = cameraTransform * glm::vec4{ camera.up, 0.0f };
+					
+					previousPosition = camera.position;
+
+					break;
+				}
+			}
+		}
 	}
 
-	auto& camera = controls.observer ? observerCamera : playerCamera;
 	auto projection = glm::perspective(glm::radians(45.0f),
-		static_cast<float_t>(details.swapchainExtent.width) /
-		static_cast<float_t>(details.swapchainExtent.height), 0.01f, 100.0f);
+		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
 	projection[1][1] *= -1;
 
-	auto data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, imageIndex * details.uniformStride,
-		details.uniformStride));
+	auto data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, imageIndex * details.uniformStride, details.uniformStride));
 	auto transform = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
 	std::memcpy(data + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 		auto& sourceTransform = meshes.at(portalIndex).transform,
 			& destinationTransform = meshes.at(portalIndex + 1 - portalIndex % 2 * 2).transform;
-		auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) *
-			glm::inverse(destinationTransform);
+		auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(destinationTransform);
 
 		svh::Camera portalCamera{};
 		portalCamera.position = cameraTransform * glm::vec4{ camera.position, 1.0f };
 		portalCamera.direction = cameraTransform * glm::vec4{ camera.direction, 0.0f };
 		portalCamera.up = cameraTransform * glm::vec4{ camera.up, 0.0f };
 
-		transform = projection *
-			glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
+		transform = projection * glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
 		std::memcpy(data + portalIndex * details.uniformAlignment, &transform, sizeof(glm::mat4));
 	}
 
@@ -1339,27 +1378,24 @@ void draw() {
 
 		state.previousTime = state.currentTime;
 		state.currentTime = std::chrono::high_resolution_clock::now();
-		state.timeDelta = std::chrono::duration<float, std::chrono::seconds::period>(
-			state.currentTime - state.previousTime).count();
+		state.timeDelta = std::chrono::duration<float, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 		state.checkPoint += state.timeDelta;
 		state.frameCount++;
 
-		static_cast<void>(device.waitForFences(1, &frameFences[state.currentImage], true,
-			std::numeric_limits<uint64_t>::max()));
+		updateScene(state.currentImage);
+
+		static_cast<void>(device.waitForFences(1, &frameFences[state.currentImage], true, std::numeric_limits<uint64_t>::max()));
 		auto imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(),
 			availableSemaphores.at(state.currentImage), nullptr).value;
 
 		if (orderFences.at(imageIndex))
-			static_cast<void>(device.waitForFences(1, &orderFences.at(imageIndex), true,
-				std::numeric_limits<uint64_t>::max()));
+			static_cast<void>(device.waitForFences(1, &orderFences.at(imageIndex), true, std::numeric_limits<uint64_t>::max()));
 
 		orderFences.at(imageIndex) = frameFences.at(state.currentImage);
 
 		std::array<vk::Semaphore, 1> waitSemaphores{ availableSemaphores[state.currentImage] };
 		std::array<vk::Semaphore, 1> signalSemaphores{ finishedSemaphores[state.currentImage] };
 		std::array<vk::PipelineStageFlags, 1> waitStages{ vk::PipelineStageFlagBits::eColorAttachmentOutput };
-
-		updateScene(state.currentImage);
 
 		vk::SubmitInfo submitInfo{};
 		submitInfo.waitSemaphoreCount = waitSemaphores.size();
