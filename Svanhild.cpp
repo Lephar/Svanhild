@@ -1,4 +1,4 @@
-﻿#include "Svanhild.hpp"
+#include "Svanhild.hpp"
 
 GLFWwindow* window;
 tinygltf::TinyGLTF objectLoader;
@@ -9,6 +9,7 @@ glm::vec3 previousPosition;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
 std::vector<svh::Mesh> meshes;
+std::vector<svh::Portal> portals;
 
 vk::Instance instance;
 vk::SurfaceKHR surface;
@@ -252,7 +253,7 @@ void createDevice() {
 	commandPool = device.createCommandPool(poolInfo);
 }
 
-//TODO: Check format availability
+//TODO: Check format availability and generate mipmaps
 svh::Details generateDetails() {
 	svh::Details temporaryDetails;
 
@@ -512,8 +513,7 @@ void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::Image
 }
 
 //TODO: Use continuous memory for images
-svh::Image
-loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t>& data) {
+svh::Image loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::Format format, std::vector<uint8_t>& data) {
 	svh::Image image{};
 	svh::Buffer buffer{};
 
@@ -576,7 +576,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 
 		mesh.vertexOffset = vertices.size();
 		mesh.vertexLength = texcoords.size();
-		
+
 		for (auto index = 0u; index < mesh.vertexLength; index++) {
 			svh::Vertex vertex{};
 			vertex.position = transform * glm::vec4{ positions.at(index), 1.0f };
@@ -594,7 +594,10 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			}
 		}
 
-		if (type == svh::Type::Portal) {
+		if (type == svh::Type::Mesh) {
+			details.meshCount++;
+			meshes.push_back(mesh);
+		} else {
 			auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
 			auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ std::numeric_limits<float_t>::min() };
 
@@ -613,17 +616,19 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 				max.z = std::max(max.z, vertex.position.z);
 			}
 
-			mesh.origin = origin / static_cast<float_t>(mesh.vertexLength);
-			mesh.normal = glm::normalize(normal);
-			mesh.minBorders = min;
-			mesh.maxBorders = max;
-			mesh.transform = transform;
+			svh::Portal portal{};
+			portal.mesh = mesh;
+			portal.origin = origin / static_cast<float_t>(mesh.vertexLength);
+			portal.normal = glm::normalize(normal);
+			portal.minBorders = min;
+			portal.maxBorders = max;
+			portal.matrix = transform;
 
 			details.portalCount++;
+			portals.push_back(portal);
 		}
 
-		details.meshCount++;
-		meshes.push_back(mesh);
+		
 	}
 }
 
@@ -631,7 +636,7 @@ void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 tr
 	glm::mat4 scale{ 1.0f }, rotation{ 1.0f }, translation{ 1.0f };
 
 	if (!nodeData.rotation.empty())
-		rotation = glm::toMat4(glm::qua{nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2)});
+		rotation = glm::toMat4(glm::qua{ nodeData.rotation.at(3), nodeData.rotation.at(0), nodeData.rotation.at(1), nodeData.rotation.at(2) });
 	for (auto index = 0u; index < nodeData.scale.size(); index++)
 		scale[index][index] = nodeData.scale.at(index);
 	for (auto index = 0u; index < nodeData.translation.size(); index++)
@@ -677,14 +682,21 @@ void loadModel(std::string filename, svh::Type type) {
 	auto& scene = modelData.scenes.at(modelData.defaultScene);
 	for (auto& nodeIndex : scene.nodes)
 		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type);
+
+	if(type == svh::Type::Portal) {
+		auto& blue = portals.at(details.portalCount - 2), &orange = portals.at(details.portalCount - 1);
+
+		blue.transform = blue.matrix * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(orange.matrix);
+		orange.transform = orange.matrix * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(blue.matrix);
+	}
 }
 
 void createScene() {
 	loadModel("Observer.glb", svh::Type::Observer);
 	loadModel("Player.glb", svh::Type::Player);
 	loadModel("Portal.glb", svh::Type::Portal);
-	loadModel("Room1.glb", svh::Type::Model);
-	loadModel("Room2.glb", svh::Type::Model);
+	loadModel("Room1.glb", svh::Type::Mesh);
+	loadModel("Room2.glb", svh::Type::Mesh);
 }
 
 void createRenderPass() {
@@ -942,8 +954,8 @@ void createPipelines() {
 	vk::Viewport viewport{};
 	viewport.x = 0.0f;
 	viewport.y = 0.0f;
-	viewport.width = details.swapchainExtent.width;
-	viewport.height = details.swapchainExtent.height;
+	viewport.width = static_cast<float_t>(details.swapchainExtent.width);
+	viewport.height = static_cast<float_t>(details.swapchainExtent.height);
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
 
@@ -987,7 +999,7 @@ void createPipelines() {
 	for (auto index = 0u; index < details.portalCount; index++) {
 		stencilOpState.reference = index + 1;
 		depthStencil.front = stencilOpState;
-		meshes.at(index).stencilPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+		portals.at(index).stencilPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
 	}
 
 	stencilOpState.passOp = vk::StencilOp::eKeep;
@@ -996,7 +1008,7 @@ void createPipelines() {
 	for (auto index = 0u; index < details.portalCount; index++) {
 		stencilOpState.reference = index + 1;
 		depthStencil.front = stencilOpState;
-		meshes.at(index).renderPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+		portals.at(index).renderPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
 	}
 }
 
@@ -1069,70 +1081,83 @@ void createElementBuffers() {
 		uniformBuffer.buffer, uniformBuffer.memory);
 }
 
+void updateDescriptorSet(svh::Mesh &mesh) {
+	vk::DescriptorBufferInfo uniformInfo{};
+	uniformInfo.buffer = uniformBuffer.buffer;
+	uniformInfo.offset = 0;
+	uniformInfo.range = details.uniformAlignment;
+
+	vk::DescriptorImageInfo samplerInfo{};
+	samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+	samplerInfo.imageView = mesh.texture.view;
+	samplerInfo.sampler = sampler;
+
+	vk::WriteDescriptorSet uniformWrite{};
+	uniformWrite.dstSet = mesh.descriptorSet;
+	uniformWrite.dstBinding = 0;
+	uniformWrite.dstArrayElement = 0;
+	uniformWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+	uniformWrite.descriptorCount = 1;
+	uniformWrite.pBufferInfo = &uniformInfo;
+	uniformWrite.pImageInfo = nullptr;
+	uniformWrite.pTexelBufferView = nullptr;
+
+	vk::WriteDescriptorSet samplerWrite{};
+	samplerWrite.dstSet = mesh.descriptorSet;
+	samplerWrite.dstBinding = 1;
+	samplerWrite.dstArrayElement = 0;
+	samplerWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+	samplerWrite.descriptorCount = 1;
+	samplerWrite.pBufferInfo = nullptr;
+	samplerWrite.pImageInfo = &samplerInfo;
+	samplerWrite.pTexelBufferView = nullptr;
+
+	std::array<vk::WriteDescriptorSet, 2> descriptorWrites{ uniformWrite, samplerWrite };
+	device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
+}
+
 void createDescriptorSets() {
+	auto descriptorCount = details.portalCount + details.meshCount;
+
 	vk::DescriptorPoolSize uniformSize{};
 	uniformSize.type = vk::DescriptorType::eUniformBufferDynamic;
-	uniformSize.descriptorCount = details.meshCount;
+	uniformSize.descriptorCount = descriptorCount;
 
 	vk::DescriptorPoolSize samplerSize{};
 	samplerSize.type = vk::DescriptorType::eCombinedImageSampler;
-	samplerSize.descriptorCount = details.meshCount;
+	samplerSize.descriptorCount = descriptorCount;
 
 	std::array<vk::DescriptorPoolSize, 2> poolSizes{ uniformSize, samplerSize };
 
 	vk::DescriptorPoolCreateInfo poolInfo{};
 	poolInfo.poolSizeCount = poolSizes.size();
 	poolInfo.pPoolSizes = poolSizes.data();
-	poolInfo.maxSets = details.meshCount;
+	poolInfo.maxSets = descriptorCount;
 
 	descriptorPool = device.createDescriptorPool(poolInfo);
 
-	for (auto& mesh : meshes) {
-		std::vector<vk::DescriptorSetLayout> layouts{ details.meshCount, descriptorSetLayout };
+	std::vector<vk::DescriptorSetLayout> descriptorSetLayouts{ descriptorCount, descriptorSetLayout };
 
-		vk::DescriptorSetAllocateInfo allocateInfo{};
-		allocateInfo.descriptorPool = descriptorPool;
-		allocateInfo.descriptorSetCount = 1;
-		allocateInfo.pSetLayouts = &descriptorSetLayout;
+	vk::DescriptorSetAllocateInfo allocateInfo{};
+	allocateInfo.descriptorPool = descriptorPool;
+	allocateInfo.descriptorSetCount = descriptorSetLayouts.size();
+	allocateInfo.pSetLayouts = descriptorSetLayouts.data();
 
-		mesh.descriptorSet = device.allocateDescriptorSets(allocateInfo).front();
+	auto descriptorSets = device.allocateDescriptorSets(allocateInfo);
 
-		vk::DescriptorBufferInfo uniformInfo{};
-		uniformInfo.buffer = uniformBuffer.buffer;
-		uniformInfo.offset = 0;
-		uniformInfo.range = details.uniformAlignment;
-
-		vk::DescriptorImageInfo samplerInfo{};
-		samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-		samplerInfo.imageView = mesh.texture.view;
-		samplerInfo.sampler = sampler;
-
-		vk::WriteDescriptorSet uniformWrite{};
-		uniformWrite.dstSet = mesh.descriptorSet;
-		uniformWrite.dstBinding = 0;
-		uniformWrite.dstArrayElement = 0;
-		uniformWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
-		uniformWrite.descriptorCount = 1;
-		uniformWrite.pBufferInfo = &uniformInfo;
-		uniformWrite.pImageInfo = nullptr;
-		uniformWrite.pTexelBufferView = nullptr;
-
-		vk::WriteDescriptorSet samplerWrite{};
-		samplerWrite.dstSet = mesh.descriptorSet;
-		samplerWrite.dstBinding = 1;
-		samplerWrite.dstArrayElement = 0;
-		samplerWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-		samplerWrite.descriptorCount = 1;
-		samplerWrite.pBufferInfo = nullptr;
-		samplerWrite.pImageInfo = &samplerInfo;
-		samplerWrite.pTexelBufferView = nullptr;
-
-		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{ uniformWrite, samplerWrite };
-		device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
+	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
+		auto& mesh = portals.at(portalIndex).mesh;
+		mesh.descriptorSet = descriptorSets.at(portalIndex);
+		updateDescriptorSet(mesh);
+	}
+		
+	for (auto meshIndex = 0u; meshIndex < details.meshCount; meshIndex++) {
+		auto& mesh = meshes.at(meshIndex);
+		mesh.descriptorSet = descriptorSets.at(details.portalCount + meshIndex);
+		updateDescriptorSet(mesh);
 	}
 }
 
-//TODO: Implement an indexing function
 void createCommandBuffers() {
 	vk::CommandBufferAllocateInfo allocateInfo{};
 	allocateInfo.commandPool = commandPool;
@@ -1195,36 +1220,27 @@ void createCommandBuffers() {
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 		commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
-		for (auto meshIndex = details.portalCount; meshIndex < details.meshCount; meshIndex++) {
-			auto& mesh = meshes.at(meshIndex);
-
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-				&mesh.descriptorSet, 1, &uniformOffset);
+		for (auto& mesh : meshes) {
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
 			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
 
-		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-			auto& portal = meshes.at(portalIndex);
-
+		for (auto& portal : portals) {
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-				&portal.descriptorSet, 1, &uniformOffset);
-			commandBuffer.drawIndexed(portal.indexLength, 1, portal.indexOffset, portal.vertexOffset, 0);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &portal.mesh.descriptorSet, 1, &uniformOffset);
+			commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
 		}
 
 		commandBuffer.clearAttachments(1, &clearAttachment, 1, &clearRect);
 
 		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-			auto& portal = meshes.at(portalIndex);
+			auto& portal = portals.at(portalIndex);
 			uniformOffset = imageIndex * details.uniformStride + portalIndex * details.uniformAlignment;
 
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
-			for (auto meshIndex = details.portalCount; meshIndex < details.meshCount; meshIndex++) {
-				auto& mesh = meshes.at(meshIndex);
-
-				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1,
-					&mesh.descriptorSet, 1, &uniformOffset);
+			for (auto& mesh : meshes) {
+				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
 				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 			}
 		}
@@ -1292,7 +1308,8 @@ void updateScene(uint32_t imageIndex) {
 			camera.position -= camera.position.z * glm::vec3{ direction, 0.0f };
 			camera.up = rotation * glm::vec4{ camera.up, 0.0f };
 		}
-	} else {
+	}
+	else {
 		previousPosition = camera.position;
 
 		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
@@ -1311,29 +1328,19 @@ void updateScene(uint32_t imageIndex) {
 
 		auto coefficient = 0.0f, distance = glm::length(camera.position - previousPosition);
 		auto direction = glm::normalize(camera.position - previousPosition);
-		
-		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-			auto& portal = meshes.at(portalIndex);
 
+		for (auto portal : portals) {
 			if (svh::epsilon < distance && glm::intersectRayPlane(previousPosition, direction, portal.origin, portal.normal, coefficient)) {
 				auto point = previousPosition + coefficient * direction;
-					
+
 				if (point.x >= portal.minBorders.x && point.y >= portal.minBorders.y && point.z >= portal.minBorders.z &&
 					point.x <= portal.maxBorders.x && point.y <= portal.maxBorders.y && point.z <= portal.maxBorders.z &&
 					0 <= coefficient && distance >= coefficient) {
 
-					std::cout << coefficient << " " << distance << std::endl;
-					std::cout << portalIndex << std::endl;
+					camera.position = portal.transform * glm::vec4{ camera.position, 1.0f };
+					camera.direction = portal.transform * glm::vec4{ camera.direction, 0.0f };
+					camera.up = portal.transform * glm::vec4{ camera.up, 0.0f };
 
-					//TODO: Get rid of duplicate transforms
-					auto& sourceTransform = meshes.at(portalIndex).transform,
-						& destinationTransform = meshes.at(portalIndex + 1 - portalIndex % 2 * 2).transform;
-					auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(destinationTransform);
-
-					camera.position = cameraTransform * glm::vec4{ camera.position, 1.0f };
-					camera.direction = cameraTransform * glm::vec4{ camera.direction, 0.0f };
-					camera.up = cameraTransform * glm::vec4{ camera.up, 0.0f };
-					
 					previousPosition = camera.position;
 
 					break;
@@ -1351,14 +1358,12 @@ void updateScene(uint32_t imageIndex) {
 	std::memcpy(data + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-		auto& sourceTransform = meshes.at(portalIndex).transform,
-			& destinationTransform = meshes.at(portalIndex + 1 - portalIndex % 2 * 2).transform;
-		auto cameraTransform = sourceTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(destinationTransform);
+		auto& portal = portals.at(portalIndex);
 
 		svh::Camera portalCamera{};
-		portalCamera.position = cameraTransform * glm::vec4{ camera.position, 1.0f };
-		portalCamera.direction = cameraTransform * glm::vec4{ camera.direction, 0.0f };
-		portalCamera.up = cameraTransform * glm::vec4{ camera.up, 0.0f };
+		portalCamera.position = portal.transform * glm::vec4{ camera.position, 1.0f };
+		portalCamera.direction = portal.transform * glm::vec4{ camera.direction, 0.0f };
+		portalCamera.up = portal.transform * glm::vec4{ camera.up, 0.0f };
 
 		transform = projection * glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
 		std::memcpy(data + portalIndex * details.uniformAlignment, &transform, sizeof(glm::mat4));
@@ -1454,11 +1459,16 @@ void clear() {
 	device.destroyImage(depthImage.image);
 	device.freeMemory(depthImage.memory);
 	for (auto& mesh : meshes) {
-		device.destroyPipeline(mesh.renderPipeline);
-		device.destroyPipeline(mesh.stencilPipeline);
 		device.destroyImageView(mesh.texture.view);
 		device.destroyImage(mesh.texture.image);
 		device.freeMemory(mesh.texture.memory);
+	}
+	for (auto& portal : portals) {
+		device.destroyPipeline(portal.renderPipeline);
+		device.destroyPipeline(portal.stencilPipeline);
+		device.destroyImageView(portal.mesh.texture.view);
+		device.destroyImage(portal.mesh.texture.image);
+		device.freeMemory(portal.mesh.texture.memory);
 	}
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipelineLayout(pipelineLayout);

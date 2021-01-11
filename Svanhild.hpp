@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define TINYGLTF_IMPLEMENTATION
@@ -27,7 +27,7 @@ namespace svh {
 	constexpr auto epsilon = 0.0009765625f;
 
 	enum class Type {
-		Model,
+		Mesh,
 		Portal,
 		Player,
 		Observer
@@ -105,14 +105,17 @@ namespace svh {
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
 		Image texture;
+		vk::DescriptorSet descriptorSet;
+	};
 
-		//Portal:
+	struct Portal {
+		Mesh mesh;
 		glm::vec3 origin;
 		glm::vec3 normal;
 		glm::vec3 minBorders;
 		glm::vec3 maxBorders;
+		glm::mat4 matrix;
 		glm::mat4 transform;
-		vk::DescriptorSet descriptorSet;
 		vk::Pipeline stencilPipeline;
 		vk::Pipeline renderPipeline;
 	};
