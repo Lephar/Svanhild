@@ -770,11 +770,14 @@ void createRenderPass() {
 	renderPass = device.createRenderPass(renderPassInfo, nullptr);
 }
 
-vk::ShaderModule loadShader(std::string name) {
-	auto path = std::filesystem::current_path() / name;
+vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
+	auto path = std::filesystem::current_path() / "shaders" / name;
 	auto size = std::filesystem::file_size(path);
 
-	std::ifstream file(name, std::ios::binary);
+#ifndef NDEBUG
+	static_cast<void>(kind);
+
+	std::ifstream file(path, std::ios::binary);
 	std::vector<uint32_t> data(size / sizeof(uint32_t));
 	file.read(reinterpret_cast<char*>(data.data()), size);
 
@@ -782,13 +785,41 @@ vk::ShaderModule loadShader(std::string name) {
 	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
 	shaderInfo.codeSize = size;
 	shaderInfo.pCode = data.data();
+#else
+	std::ifstream file(path);
+	std::vector<char> code(size);
+	file.read(code.data(), size);
 
+	shaderc::Compiler compiler;
+	shaderc::CompileOptions options;
+	options.SetOptimizationLevel(shaderc_optimization_level_performance);
+
+	auto module = compiler.CompileGlslToSpv(code.data(), code.size(), kind, name.c_str(), "main", options);
+
+	/*if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
+		std::cout << "SHADERC Error: " << module.GetErrorMessage() << std::endl;
+		return nullptr;
+	}*/
+
+	std::vector<uint32_t> data(module.cbegin(), module.cend());
+
+	vk::ShaderModuleCreateInfo shaderInfo{};
+	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
+	shaderInfo.codeSize = data.size() * 4;
+	shaderInfo.pCode = data.data();
+#endif
+	
 	return device.createShaderModule(shaderInfo);
 }
 
 void createPipelineLayout() {
-	vertexShader = loadShader("shaders/vertex.spv");
-	fragmentShader = loadShader("shaders/fragment.spv");
+#ifndef NDEBUG
+	vertexShader = loadShader("vertex.spv", shaderc_glsl_vertex_shader);
+	fragmentShader = loadShader("fragment.spv", shaderc_glsl_fragment_shader);
+#else
+	vertexShader = loadShader("vertex.vert", shaderc_glsl_vertex_shader);
+	fragmentShader = loadShader("fragment.frag", shaderc_glsl_fragment_shader);
+#endif
 
 	vk::SamplerCreateInfo samplerInfo{};
 	samplerInfo.magFilter = vk::Filter::eLinear;
