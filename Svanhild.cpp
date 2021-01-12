@@ -2,6 +2,9 @@
 
 GLFWwindow* window;
 tinygltf::TinyGLTF objectLoader;
+shaderc::Compiler shaderCompiler;
+shaderc::CompileOptions shaderOptions;
+
 svh::Controls controls;
 svh::State state;
 svh::Camera observerCamera, playerCamera;
@@ -137,9 +140,15 @@ void initializeControls() {
 void initializeCore() {
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
-	initializeControls();
 
+#ifndef NDEBUG
+	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
+#else
+	glfwWindowHint(GLFW_DECORATED, NULL);
+	window = glfwCreateWindow(1920, 1080, "", glfwGetPrimaryMonitor(), nullptr);
+#endif
+
+	initializeControls();
 	glfwSetKeyCallback(window, keyboardCallback);
 	glfwSetCursorPosCallback(window, mouseCallback);
 	glfwSetFramebufferSizeCallback(window, resizeEvent);
@@ -225,34 +234,6 @@ uint32_t selectQueueFamily() {
 	return std::numeric_limits<uint32_t>::max();
 }
 
-void createDevice() {
-	physicalDevice = pickPhysicalDevice();
-	auto familyIndex = selectQueueFamily();
-
-	auto queuePriority = 1.0f;
-	vk::PhysicalDeviceFeatures deviceFeatures{};
-	std::vector<const char*> extensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
-	vk::DeviceQueueCreateInfo queueInfo{};
-	queueInfo.queueFamilyIndex = familyIndex;
-	queueInfo.queueCount = 1;
-	queueInfo.pQueuePriorities = &queuePriority;
-
-	vk::DeviceCreateInfo deviceInfo{};
-	deviceInfo.queueCreateInfoCount = 1;
-	deviceInfo.pQueueCreateInfos = &queueInfo;
-	deviceInfo.pEnabledFeatures = &deviceFeatures;
-	deviceInfo.enabledExtensionCount = extensions.size();
-	deviceInfo.ppEnabledExtensionNames = extensions.data();
-
-	vk::CommandPoolCreateInfo poolInfo{};
-	poolInfo.queueFamilyIndex = familyIndex;
-
-	device = physicalDevice.createDevice(deviceInfo);
-	queue = device.getQueue(familyIndex, 0);
-	commandPool = device.createCommandPool(poolInfo);
-}
-
 //TODO: Check format availability and generate mipmaps
 svh::Details generateDetails() {
 	svh::Details temporaryDetails;
@@ -261,8 +242,8 @@ svh::Details generateDetails() {
 	temporaryDetails.portalCount = 0;
 
 	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
-	glfwGetFramebufferSize(window, reinterpret_cast<int*>(&surfaceCapabilities.currentExtent.width),
-		reinterpret_cast<int*>(&surfaceCapabilities.currentExtent.height));
+	glfwGetFramebufferSize(window, reinterpret_cast<int32_t*>(&surfaceCapabilities.currentExtent.width),
+		reinterpret_cast<int32_t*>(&surfaceCapabilities.currentExtent.height));
 	surfaceCapabilities.currentExtent.width = std::max(surfaceCapabilities.minImageExtent.width,
 		std::min(surfaceCapabilities.maxImageExtent.width, surfaceCapabilities.currentExtent.width));
 	surfaceCapabilities.currentExtent.height = std::max(surfaceCapabilities.minImageExtent.height,
@@ -309,6 +290,35 @@ svh::Details generateDetails() {
 	return temporaryDetails;
 }
 
+void createDevice() {
+	physicalDevice = pickPhysicalDevice();
+	details = generateDetails();
+	auto familyIndex = selectQueueFamily();
+
+	auto queuePriority = 1.0f;
+	vk::PhysicalDeviceFeatures deviceFeatures{};
+	std::vector<const char*> extensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
+	vk::DeviceQueueCreateInfo queueInfo{};
+	queueInfo.queueFamilyIndex = familyIndex;
+	queueInfo.queueCount = 1;
+	queueInfo.pQueuePriorities = &queuePriority;
+
+	vk::DeviceCreateInfo deviceInfo{};
+	deviceInfo.queueCreateInfoCount = 1;
+	deviceInfo.pQueueCreateInfos = &queueInfo;
+	deviceInfo.pEnabledFeatures = &deviceFeatures;
+	deviceInfo.enabledExtensionCount = extensions.size();
+	deviceInfo.ppEnabledExtensionNames = extensions.data();
+
+	vk::CommandPoolCreateInfo poolInfo{};
+	poolInfo.queueFamilyIndex = familyIndex;
+
+	device = physicalDevice.createDevice(deviceInfo);
+	queue = device.getQueue(familyIndex, 0);
+	commandPool = device.createCommandPool(poolInfo);
+}
+
 VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags flags, uint32_t mipLevels) {
 	vk::ImageViewCreateInfo viewInfo{};
 	viewInfo.viewType = vk::ImageViewType::e2D;
@@ -325,36 +335,6 @@ VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectF
 	viewInfo.subresourceRange.baseArrayLayer = 0;
 
 	return device.createImageView(viewInfo);
-}
-
-//TODO: Implement swapchain recreation on window resize
-void createSwapchain() {
-	details = generateDetails();
-
-	vk::SwapchainCreateInfoKHR swapchainInfo{};
-	swapchainInfo.flags = vk::SwapchainCreateFlagsKHR{};
-	swapchainInfo.surface = surface;
-	swapchainInfo.minImageCount = details.imageCount;
-	swapchainInfo.imageFormat = details.surfaceFormat.format;
-	swapchainInfo.imageColorSpace = details.surfaceFormat.colorSpace;
-	swapchainInfo.imageExtent = details.swapchainExtent;
-	swapchainInfo.imageArrayLayers = 1;
-	swapchainInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
-	swapchainInfo.queueFamilyIndexCount = 0;
-	swapchainInfo.pQueueFamilyIndices = nullptr;
-	swapchainInfo.preTransform = details.swapchainTransform;
-	swapchainInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-	swapchainInfo.imageSharingMode = vk::SharingMode::eExclusive;
-	swapchainInfo.presentMode = vk::PresentModeKHR::eImmediate;
-	swapchainInfo.clipped = true;
-	swapchainInfo.oldSwapchain = nullptr;
-
-	swapchain = device.createSwapchainKHR(swapchainInfo);
-	swapchainImages = device.getSwapchainImagesKHR(swapchain);
-	details.imageCount = swapchainImages.size();
-
-	for (auto& swapchainImage : swapchainImages)
-		swapchainViews.push_back(createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
 }
 
 uint32_t chooseMemoryType(uint32_t filter, vk::MemoryPropertyFlags flags) {
@@ -597,7 +577,8 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 		if (type == svh::Type::Mesh) {
 			details.meshCount++;
 			meshes.push_back(mesh);
-		} else {
+		}
+		else {
 			auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
 			auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ std::numeric_limits<float_t>::min() };
 
@@ -628,7 +609,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			portals.push_back(portal);
 		}
 
-		
+
 	}
 }
 
@@ -683,8 +664,8 @@ void loadModel(std::string filename, svh::Type type) {
 	for (auto& nodeIndex : scene.nodes)
 		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type);
 
-	if(type == svh::Type::Portal) {
-		auto& blue = portals.at(details.portalCount - 2), &orange = portals.at(details.portalCount - 1);
+	if (type == svh::Type::Portal) {
+		auto& blue = portals.at(details.portalCount - 2), & orange = portals.at(details.portalCount - 1);
 
 		blue.transform = blue.matrix * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(orange.matrix);
 		orange.transform = orange.matrix * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(blue.matrix);
@@ -697,6 +678,34 @@ void createScene() {
 	loadModel("Portal.glb", svh::Type::Portal);
 	loadModel("Room1.glb", svh::Type::Mesh);
 	loadModel("Room2.glb", svh::Type::Mesh);
+}
+
+//TODO: Implement swapchain recreation on window resize
+void createSwapchain() {
+	vk::SwapchainCreateInfoKHR swapchainInfo{};
+	swapchainInfo.flags = vk::SwapchainCreateFlagsKHR{};
+	swapchainInfo.surface = surface;
+	swapchainInfo.minImageCount = details.imageCount;
+	swapchainInfo.imageFormat = details.surfaceFormat.format;
+	swapchainInfo.imageColorSpace = details.surfaceFormat.colorSpace;
+	swapchainInfo.imageExtent = details.swapchainExtent;
+	swapchainInfo.imageArrayLayers = 1;
+	swapchainInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+	swapchainInfo.queueFamilyIndexCount = 0;
+	swapchainInfo.pQueueFamilyIndices = nullptr;
+	swapchainInfo.preTransform = details.swapchainTransform;
+	swapchainInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+	swapchainInfo.imageSharingMode = vk::SharingMode::eExclusive;
+	swapchainInfo.presentMode = vk::PresentModeKHR::eImmediate;
+	swapchainInfo.clipped = true;
+	swapchainInfo.oldSwapchain = nullptr;
+
+	swapchain = device.createSwapchainKHR(swapchainInfo);
+	swapchainImages = device.getSwapchainImagesKHR(swapchain);
+	details.imageCount = swapchainImages.size();
+
+	for (auto& swapchainImage : swapchainImages)
+		swapchainViews.push_back(createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
 }
 
 void createRenderPass() {
@@ -774,52 +783,34 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 	auto path = std::filesystem::current_path() / "shaders" / name;
 	auto size = std::filesystem::file_size(path);
 
-#ifndef NDEBUG
-	static_cast<void>(kind);
-
-	std::ifstream file(path, std::ios::binary);
-	std::vector<uint32_t> data(size / sizeof(uint32_t));
-	file.read(reinterpret_cast<char*>(data.data()), size);
-
-	vk::ShaderModuleCreateInfo shaderInfo{};
-	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
-	shaderInfo.codeSize = size;
-	shaderInfo.pCode = data.data();
-#else
 	std::ifstream file(path);
 	std::vector<char> code(size);
 	file.read(code.data(), size);
 
-	shaderc::Compiler compiler;
-	shaderc::CompileOptions options;
-	options.SetOptimizationLevel(shaderc_optimization_level_performance);
+	auto shaderModule = shaderCompiler.CompileGlslToSpv(code.data(), code.size(), kind, name.c_str(), "main", shaderOptions);
 
-	auto module = compiler.CompileGlslToSpv(code.data(), code.size(), kind, name.c_str(), "main", options);
-
-	/*if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
-		std::cout << "SHADERC Error: " << module.GetErrorMessage() << std::endl;
+#ifndef NDEBUG
+	if (shaderModule.GetCompilationStatus() != shaderc_compilation_status_success) {
+		if(!shaderModule.GetErrorMessage().empty())
+			std::cout << "SHADERC Error: " << shaderModule.GetErrorMessage() << std::endl;
 		return nullptr;
-	}*/
+	}
+#endif
 
-	std::vector<uint32_t> data(module.cbegin(), module.cend());
+	std::vector<uint32_t> data(shaderModule.cbegin(), shaderModule.cend());
 
 	vk::ShaderModuleCreateInfo shaderInfo{};
 	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
-	shaderInfo.codeSize = data.size() * 4;
+	shaderInfo.codeSize = data.size() * sizeof(uint32_t);
 	shaderInfo.pCode = data.data();
-#endif
 	
 	return device.createShaderModule(shaderInfo);
 }
 
 void createPipelineLayout() {
-#ifndef NDEBUG
-	vertexShader = loadShader("vertex.spv", shaderc_glsl_vertex_shader);
-	fragmentShader = loadShader("fragment.spv", shaderc_glsl_fragment_shader);
-#else
+	shaderOptions.SetOptimizationLevel(shaderc_optimization_level_performance);
 	vertexShader = loadShader("vertex.vert", shaderc_glsl_vertex_shader);
 	fragmentShader = loadShader("fragment.frag", shaderc_glsl_fragment_shader);
-#endif
 
 	vk::SamplerCreateInfo samplerInfo{};
 	samplerInfo.magFilter = vk::Filter::eLinear;
@@ -1298,8 +1289,8 @@ void createSyncObject() {
 void setup() {
 	initializeCore();
 	createDevice();
-	createSwapchain();
 	createScene();
+	createSwapchain();
 	createRenderPass();
 	createPipelineLayout();
 	createPipelines();
