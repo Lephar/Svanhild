@@ -144,8 +144,9 @@ void initializeCore() {
 #ifndef NDEBUG
 	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
 #else
-	glfwWindowHint(GLFW_DECORATED, NULL);
-	window = glfwCreateWindow(1920, 1080, "", glfwGetPrimaryMonitor(), nullptr);
+	//glfwWindowHint(GLFW_DECORATED, NULL);
+	//window = glfwCreateWindow(1920, 1080, "", glfwGetPrimaryMonitor(), nullptr);
+	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
 #endif
 
 	initializeControls();
@@ -608,8 +609,6 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			details.portalCount++;
 			portals.push_back(portal);
 		}
-
-
 	}
 }
 
@@ -673,11 +672,20 @@ void loadModel(std::string filename, svh::Type type) {
 }
 
 void createScene() {
-	loadModel("Observer.glb", svh::Type::Observer);
-	loadModel("Player.glb", svh::Type::Player);
-	loadModel("Portal.glb", svh::Type::Portal);
-	loadModel("Room1.glb", svh::Type::Mesh);
-	loadModel("Room2.glb", svh::Type::Mesh);
+	/*
+	loadModel("environment1/observer.glb", svh::Type::Observer);
+	loadModel("environment1/player.glb", svh::Type::Player);
+	loadModel("environment1/portal.glb", svh::Type::Portal);
+	loadModel("environment1/room1.glb", svh::Type::Mesh);
+	loadModel("environment1/room2.glb", svh::Type::Mesh);
+	*/
+	loadModel("environment2/observer.glb", svh::Type::Observer);
+	loadModel("environment2/player.glb", svh::Type::Player);
+	loadModel("environment2/portal1.glb", svh::Type::Portal);
+	loadModel("environment2/portal2.glb", svh::Type::Portal);
+	loadModel("environment2/room1.glb", svh::Type::Mesh);
+	loadModel("environment2/room2.glb", svh::Type::Mesh);
+	loadModel("environment2/room3.glb", svh::Type::Mesh);
 }
 
 //TODO: Implement swapchain recreation on window resize
@@ -791,7 +799,7 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 
 #ifndef NDEBUG
 	if (shaderModule.GetCompilationStatus() != shaderc_compilation_status_success) {
-		if(!shaderModule.GetErrorMessage().empty())
+		if (!shaderModule.GetErrorMessage().empty())
 			std::cout << "SHADERC Error: " << shaderModule.GetErrorMessage() << std::endl;
 		return nullptr;
 	}
@@ -803,7 +811,7 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 	shaderInfo.flags = vk::ShaderModuleCreateFlags{};
 	shaderInfo.codeSize = data.size() * sizeof(uint32_t);
 	shaderInfo.pCode = data.data();
-	
+
 	return device.createShaderModule(shaderInfo);
 }
 
@@ -1103,7 +1111,7 @@ void createElementBuffers() {
 		uniformBuffer.buffer, uniformBuffer.memory);
 }
 
-void updateDescriptorSet(svh::Mesh &mesh) {
+void updateDescriptorSet(svh::Mesh& mesh) {
 	vk::DescriptorBufferInfo uniformInfo{};
 	uniformInfo.buffer = uniformBuffer.buffer;
 	uniformInfo.offset = 0;
@@ -1172,7 +1180,7 @@ void createDescriptorSets() {
 		mesh.descriptorSet = descriptorSets.at(portalIndex);
 		updateDescriptorSet(mesh);
 	}
-		
+
 	for (auto meshIndex = 0u; meshIndex < details.meshCount; meshIndex++) {
 		auto& mesh = meshes.at(meshIndex);
 		mesh.descriptorSet = descriptorSets.at(details.portalCount + meshIndex);
@@ -1371,12 +1379,13 @@ void updateScene(uint32_t imageIndex) {
 		}
 	}
 
+	auto view = glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
 	auto projection = glm::perspective(glm::radians(45.0f),
 		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
 	projection[1][1] *= -1;
 
 	auto data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, imageIndex * details.uniformStride, details.uniformStride));
-	auto transform = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
+	auto transform = projection * view;
 	std::memcpy(data + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
@@ -1387,8 +1396,29 @@ void updateScene(uint32_t imageIndex) {
 		portalCamera.direction = portal.transform * glm::vec4{ camera.direction, 0.0f };
 		portalCamera.up = portal.transform * glm::vec4{ camera.up, 0.0f };
 
-		transform = projection * glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
-		std::memcpy(data + portalIndex * details.uniformAlignment, &transform, sizeof(glm::mat4));
+		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
+		auto portalProjection = glm::perspective(glm::radians(45.0f),
+			static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
+		/*
+		auto plane = glm::vec4{ portal.normal, glm::dot(-portal.normal, portal.origin) };
+
+		glm::vec4 quaternion{};
+		quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
+		quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
+		quaternion.z = -1.0f;
+		quaternion.w = portalProjection[2][2] / portalProjection[3][2];
+
+		auto clip = plane * (1.0f / glm::dot(plane, quaternion));
+
+		portalProjection[0][2] = clip.x;
+		portalProjection[1][2] = clip.y;
+		portalProjection[2][2] = clip.z;
+		portalProjection[3][2] = clip.w;
+		*/
+		portalProjection[1][1] *= -1;
+
+		auto portalTransform = portalProjection * portalView;
+		std::memcpy(data + portalIndex * details.uniformAlignment, &portalTransform, sizeof(glm::mat4));
 	}
 
 	device.unmapMemory(uniformBuffer.memory);
