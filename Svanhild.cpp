@@ -1202,10 +1202,6 @@ void createCommandBuffers() {
 
 		vk::DeviceSize bufferOffset = 0;
 
-		vk::Offset2D areaOffset{};
-		areaOffset.x = 0;
-		areaOffset.y = 0;
-
 		vk::ClearValue colorClear{};
 		colorClear.color.float32.at(0) = 0.0f;
 		colorClear.color.float32.at(1) = 0.0f;
@@ -1218,19 +1214,28 @@ void createCommandBuffers() {
 
 		std::array<vk::ClearValue, 2> clearValues{ colorClear, depthStencilClear };
 
-		vk::Rect2D rect{};
-		rect.offset = areaOffset;
-		rect.extent = details.swapchainExtent;
+		vk::Offset2D areaOffset{};
+		areaOffset.x = 0;
+		areaOffset.y = 0;
 
-		vk::ClearRect clearRect{};
-		clearRect.baseArrayLayer = 0;
-		clearRect.layerCount = 2;
-		clearRect.rect = rect;
+		vk::Rect2D area{};
+		area.offset = areaOffset;
+		area.extent = details.swapchainExtent;
 
-		vk::ClearAttachment clearAttachment{};
-		clearAttachment.aspectMask = vk::ImageAspectFlagBits::eDepth;
-		clearAttachment.clearValue = depthStencilClear;
-		clearAttachment.colorAttachment = -1;
+		vk::ClearRect clearArea{};
+		clearArea.baseArrayLayer = 0;
+		clearArea.layerCount = 1;
+		clearArea.rect = area;
+
+		vk::ClearAttachment depthClearAttachment{};
+		depthClearAttachment.aspectMask = vk::ImageAspectFlagBits::eDepth;
+		depthClearAttachment.clearValue = depthStencilClear;
+		depthClearAttachment.colorAttachment = -1;
+
+		vk::ClearAttachment stencilClearAttachment{};
+		stencilClearAttachment.aspectMask = vk::ImageAspectFlagBits::eStencil;
+		stencilClearAttachment.clearValue = depthStencilClear;
+		stencilClearAttachment.colorAttachment = -1;
 
 		vk::CommandBufferBeginInfo beginInfo{};
 		beginInfo.pInheritanceInfo = nullptr;
@@ -1238,17 +1243,15 @@ void createCommandBuffers() {
 		vk::RenderPassBeginInfo renderPassInfo{};
 		renderPassInfo.renderPass = renderPass;
 		renderPassInfo.framebuffer = framebuffers.at(imageIndex);
-		renderPassInfo.renderArea.offset = areaOffset;
-		renderPassInfo.renderArea.extent = details.swapchainExtent;
+		renderPassInfo.renderArea = area;
 		renderPassInfo.clearValueCount = clearValues.size();
 		renderPassInfo.pClearValues = clearValues.data();
 
 		static_cast<void>(commandBuffer.begin(beginInfo));
 		commandBuffer.bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
 		commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer.buffer, &bufferOffset);
-
-		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 		commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 		for (auto& mesh : meshes) {
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
@@ -1261,7 +1264,7 @@ void createCommandBuffers() {
 			commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
 		}
 
-		commandBuffer.clearAttachments(1, &clearAttachment, 1, &clearRect);
+		commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
 
 		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 			auto& portal = portals.at(portalIndex);
@@ -1275,6 +1278,7 @@ void createCommandBuffers() {
 			}
 		}
 
+		commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 		commandBuffer.endRenderPass();
 		static_cast<void>(commandBuffer.end());
 	}
