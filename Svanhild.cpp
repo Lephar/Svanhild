@@ -24,12 +24,12 @@ svh::Details details;
 vk::SwapchainKHR swapchain;
 std::vector<vk::Image> swapchainImages;
 std::vector<vk::ImageView> swapchainViews;
-vk::RenderPass renderPass;
-vk::ShaderModule vertexShader, fragmentShader, stencilShader;
 vk::Sampler sampler;
-vk::DescriptorSetLayout descriptorSetLayout;
-vk::PipelineLayout pipelineLayout;
-vk::Pipeline graphicsPipeline;
+vk::RenderPass renderPass;
+vk::ShaderModule computeShader, vertexShader, fragmentShader;
+vk::DescriptorSetLayout computeSetLayout, graphicsSetLayout;
+vk::PipelineLayout computePipelineLayout, graphicsPipelineLayout;
+vk::Pipeline computePipeline, graphicsPipeline;
 svh::Image colorImage, depthImage;
 std::vector<vk::Framebuffer> framebuffers;
 svh::Buffer indexBuffer, vertexBuffer, uniformBuffer;
@@ -225,10 +225,12 @@ uint32_t selectQueueFamily() {
 	auto queueFamilies = physicalDevice.getQueueFamilyProperties();
 
 	for (auto index = 0u; index < queueFamilies.size(); index++) {
-		auto graphicsSupport = queueFamilies.at(index).queueFlags & vk::QueueFlagBits::eGraphics;
+		auto& flags = queueFamilies.at(index).queueFlags;
+		auto computeSupport = flags & vk::QueueFlagBits::eCompute;
+		auto graphicsSupport = flags & vk::QueueFlagBits::eGraphics;
 		auto presentSupport = physicalDevice.getSurfaceSupportKHR(index, surface);
 
-		if (graphicsSupport && presentSupport)
+		if (computeSupport && graphicsSupport && presentSupport)
 			return index;
 	}
 
@@ -258,7 +260,7 @@ svh::Details generateDetails() {
 	temporaryDetails.surfaceFormat = surfaceFormats.front();
 
 	for (auto& surfaceFormat : surfaceFormats)
-		if (surfaceFormat.format == vk::Format::eB8G8R8A8Srgb && surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+		if (surfaceFormat.format == vk::Format::eR8G8B8A8Srgb && surfaceFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
 			temporaryDetails.surfaceFormat = surfaceFormat;
 
 	auto presentModes = physicalDevice.getSurfacePresentModesKHR(surface);
@@ -519,7 +521,7 @@ svh::Image loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::For
 	return image;
 }
 
-void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform, svh::Type type) {
+void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform, svh::Type type, uint8_t sourceRoom, uint8_t targetRoom) {
 	for (auto& primitive : meshData.primitives) {
 		auto& indexReference = modelData.bufferViews.at(primitive.indices);
 		auto& indexData = modelData.buffers.at(indexReference.buffer);
@@ -561,7 +563,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 		for (auto index = 0u; index < mesh.vertexLength; index++) {
 			svh::Vertex vertex{};
 			vertex.position = transform * glm::vec4{ positions.at(index), 1.0f };
-			vertex.normal = transform * glm::vec4{ normals.at(index), 0.0f };
+			vertex.normal = glm::normalize(glm::vec3{ transform * glm::vec4{ glm::normalize(normals.at(index)), 0.0f } });
 			vertex.texture = texcoords.at(index);
 			vertices.push_back(vertex);
 		}
@@ -575,36 +577,38 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			}
 		}
 
+		auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
+		auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ std::numeric_limits<float_t>::min() };
+
+		for (auto index = 0u; index < mesh.vertexLength; index++) {
+			auto& vertex = vertices.at(mesh.vertexOffset + index);
+
+			origin += vertex.position;
+			normal += vertex.normal;
+
+			min.x = std::min(min.x, vertex.position.x);
+			min.y = std::min(min.y, vertex.position.y);
+			min.z = std::min(min.z, vertex.position.z);
+
+			max.x = std::max(max.x, vertex.position.x);
+			max.y = std::max(max.y, vertex.position.y);
+			max.z = std::max(max.z, vertex.position.z);
+		}
+
+		mesh.origin = origin / static_cast<float_t>(mesh.vertexLength);
+		mesh.normal = glm::normalize(normal);
+		mesh.minBorders = min;
+		mesh.maxBorders = max;
+		mesh.sourceTransform = transform;
+
 		if (type == svh::Type::Mesh) {
 			details.meshCount++;
 			meshes.push_back(mesh);
 		}
+		
 		else {
-			auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
-			auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ std::numeric_limits<float_t>::min() };
-
-			for (auto index = 0u; index < mesh.vertexLength; index++) {
-				auto& vertex = vertices.at(mesh.vertexOffset + index);
-
-				origin += vertex.position;
-				normal += vertex.normal;
-
-				min.x = std::min(min.x, vertex.position.x);
-				min.y = std::min(min.y, vertex.position.y);
-				min.z = std::min(min.z, vertex.position.z);
-
-				max.x = std::max(max.x, vertex.position.x);
-				max.y = std::max(max.y, vertex.position.y);
-				max.z = std::max(max.z, vertex.position.z);
-			}
-
 			svh::Portal portal{};
 			portal.mesh = mesh;
-			portal.origin = origin / static_cast<float_t>(mesh.vertexLength);
-			portal.normal = glm::normalize(normal);
-			portal.minBorders = min;
-			portal.maxBorders = max;
-			portal.matrix = transform;
 
 			details.portalCount++;
 			portals.push_back(portal);
@@ -612,7 +616,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 	}
 }
 
-void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform, svh::Type type) {
+void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform, svh::Type type, uint8_t sourceRoom, uint8_t targetRoom) {
 	glm::mat4 scale{ 1.0f }, rotation{ 1.0f }, translation{ 1.0f };
 
 	if (!nodeData.rotation.empty())
@@ -637,14 +641,14 @@ void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 tr
 
 	else {
 		if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
-			loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform, type);
+			loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform, type, sourceRoom, targetRoom);
 
 		for (auto& childIndex : nodeData.children)
-			loadNode(modelData, modelData.nodes.at(childIndex), transform, type);
+			loadNode(modelData, modelData.nodes.at(childIndex), transform, type, sourceRoom, targetRoom);
 	}
 }
 
-void loadModel(std::string filename, svh::Type type) {
+void loadModel(std::string filename, svh::Type type, uint8_t sourceRoom = 0, uint8_t targetRoom = 0) {
 	std::string error, warning;
 	tinygltf::Model modelData;
 
@@ -661,31 +665,52 @@ void loadModel(std::string filename, svh::Type type) {
 
 	auto& scene = modelData.scenes.at(modelData.defaultScene);
 	for (auto& nodeIndex : scene.nodes)
-		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type);
+		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type, sourceRoom, targetRoom);
+}
 
-	if (type == svh::Type::Portal) {
-		auto& blue = portals.at(details.portalCount - 2), & orange = portals.at(details.portalCount - 1);
+void bindPortals(uint32_t blueIndex, uint32_t orangeIndex) {
+	auto& bluePortal = portals.at(blueIndex), & orangePortal = portals.at(orangeIndex);
+	
+	bluePortal.pair = orangeIndex;
+	orangePortal.pair = blueIndex;
 
-		blue.transform = blue.matrix * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(orange.matrix);
-		orange.transform = orange.matrix * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(blue.matrix);
-	}
+	bluePortal.targetRoom = orangePortal.mesh.sourceRoom;
+	orangePortal.targetRoom = bluePortal.mesh.sourceRoom;
+
+	bluePortal.targetTransform = orangePortal.mesh.sourceTransform;
+	orangePortal.targetTransform = bluePortal.mesh.sourceTransform;
+
+	bluePortal.cameraTransform = bluePortal.targetTransform - bluePortal.mesh.sourceTransform;
+	orangePortal.cameraTransform = orangePortal.targetTransform - orangePortal.mesh.sourceTransform;
 }
 
 void createScene() {
-	/*
-	loadModel("environment1/observer.glb", svh::Type::Observer);
-	loadModel("environment1/player.glb", svh::Type::Player);
-	loadModel("environment1/portal.glb", svh::Type::Portal);
-	loadModel("environment1/room1.glb", svh::Type::Mesh);
-	loadModel("environment1/room2.glb", svh::Type::Mesh);
-	*/
-	loadModel("environment2/observer.glb", svh::Type::Observer);
-	loadModel("environment2/player.glb", svh::Type::Player);
-	loadModel("environment2/portal1.glb", svh::Type::Portal);
-	loadModel("environment2/portal2.glb", svh::Type::Portal);
-	loadModel("environment2/room1.glb", svh::Type::Mesh);
-	loadModel("environment2/room2.glb", svh::Type::Mesh);
-	loadModel("environment2/room3.glb", svh::Type::Mesh);
+	loadModel("environment3/models/observer.glb", svh::Type::Observer);
+	loadModel("environment3/models/player.glb", svh::Type::Player);
+
+	loadModel("environment3/models/room1.glb", svh::Type::Mesh, 1);
+	/*loadModel("environment3/models/room2.glb", svh::Type::Mesh, 2);
+	loadModel("environment3/models/room3.glb", svh::Type::Mesh, 3);
+	loadModel("environment3/models/room4.glb", svh::Type::Mesh, 4);
+	loadModel("environment3/models/room5.glb", svh::Type::Mesh, 5);
+	loadModel("environment3/models/room6.glb", svh::Type::Mesh, 6);
+
+	loadModel("environment3/models/portal12.glb", svh::Type::Portal, 1, 2);
+	loadModel("environment3/models/portal21.glb", svh::Type::Portal, 2, 1);
+	loadModel("environment3/models/portal13.glb", svh::Type::Portal, 1, 3);
+	loadModel("environment3/models/portal31.glb", svh::Type::Portal, 3, 1);
+	loadModel("environment3/models/portal14.glb", svh::Type::Portal, 1, 4);
+	loadModel("environment3/models/portal41.glb", svh::Type::Portal, 4, 1);
+	loadModel("environment3/models/portal15.glb", svh::Type::Portal, 1, 5);
+	loadModel("environment3/models/portal51.glb", svh::Type::Portal, 5, 1);
+	loadModel("environment3/models/portal26.glb", svh::Type::Portal, 2, 6);
+	loadModel("environment3/models/portal62.glb", svh::Type::Portal, 6, 2);
+
+	bindPortals(0, 1);
+	bindPortals(2, 3);
+	bindPortals(4, 5);
+	bindPortals(6, 7);
+	bindPortals(8, 9);*/
 }
 
 //TODO: Implement swapchain recreation on window resize
@@ -817,8 +842,76 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 
 void createPipelineLayout() {
 	shaderOptions.SetOptimizationLevel(shaderc_optimization_level_performance);
+	computeShader = loadShader("compute.comp", shaderc_glsl_compute_shader);
 	vertexShader = loadShader("vertex.vert", shaderc_glsl_vertex_shader);
 	fragmentShader = loadShader("fragment.frag", shaderc_glsl_fragment_shader);
+
+	vk::DescriptorSetLayoutBinding frustumPlanesBinding{};
+	frustumPlanesBinding.binding = 0;
+	frustumPlanesBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+	frustumPlanesBinding.descriptorCount = 1;
+	frustumPlanesBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+	frustumPlanesBinding.pImmutableSamplers = nullptr;
+
+	vk::DescriptorSetLayoutBinding instanceDataBinding{};
+	instanceDataBinding.binding = 1;
+	instanceDataBinding.descriptorType = vk::DescriptorType::eStorageBuffer;
+	instanceDataBinding.descriptorCount = 1;
+	instanceDataBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+	instanceDataBinding.pImmutableSamplers = nullptr;
+
+	vk::DescriptorSetLayoutBinding indirectDrawsBinding{};
+	indirectDrawsBinding.binding = 2;
+	indirectDrawsBinding.descriptorType = vk::DescriptorType::eStorageBuffer;
+	indirectDrawsBinding.descriptorCount = 1;
+	indirectDrawsBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+	indirectDrawsBinding.pImmutableSamplers = nullptr;
+
+	std::array<vk::DescriptorSetLayoutBinding, 3> computeBindings{ frustumPlanesBinding, instanceDataBinding, indirectDrawsBinding };
+
+	vk::DescriptorSetLayoutCreateInfo computeDescriptorInfo{};
+	computeDescriptorInfo.bindingCount = computeBindings.size();
+	computeDescriptorInfo.pBindings = computeBindings.data();
+
+	computeSetLayout = device.createDescriptorSetLayout(computeDescriptorInfo);
+
+	vk::PipelineLayoutCreateInfo computeLayoutInfo{};
+	computeLayoutInfo.setLayoutCount = 1;
+	computeLayoutInfo.pSetLayouts = &computeSetLayout;
+	computeLayoutInfo.pushConstantRangeCount = 0;
+	computeLayoutInfo.pPushConstantRanges = nullptr;
+
+	computePipelineLayout = device.createPipelineLayout(computeLayoutInfo);
+	
+	vk::DescriptorSetLayoutBinding uniformLayoutBinding{};
+	uniformLayoutBinding.binding = 0;
+	uniformLayoutBinding.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+	uniformLayoutBinding.descriptorCount = 1;
+	uniformLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+	uniformLayoutBinding.pImmutableSamplers = nullptr;
+
+	vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
+	samplerLayoutBinding.binding = 1;
+	samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+	samplerLayoutBinding.descriptorCount = 1;
+	samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+	samplerLayoutBinding.pImmutableSamplers = nullptr;
+
+	std::array<vk::DescriptorSetLayoutBinding, 2> graphicsBindings{ uniformLayoutBinding, samplerLayoutBinding };
+
+	vk::DescriptorSetLayoutCreateInfo graphicsDescriptorInfo{};
+	graphicsDescriptorInfo.bindingCount = graphicsBindings.size();
+	graphicsDescriptorInfo.pBindings = graphicsBindings.data();
+
+	graphicsSetLayout = device.createDescriptorSetLayout(graphicsDescriptorInfo);
+
+	vk::PipelineLayoutCreateInfo graphicsLayoutInfo{};
+	graphicsLayoutInfo.setLayoutCount = 1;
+	graphicsLayoutInfo.pSetLayouts = &graphicsSetLayout;
+	graphicsLayoutInfo.pushConstantRangeCount = 0;
+	graphicsLayoutInfo.pPushConstantRanges = nullptr;
+
+	graphicsPipelineLayout = device.createPipelineLayout(graphicsLayoutInfo);
 
 	vk::SamplerCreateInfo samplerInfo{};
 	samplerInfo.magFilter = vk::Filter::eLinear;
@@ -838,39 +931,15 @@ void createPipelineLayout() {
 	samplerInfo.maxLod = 1.0f;
 
 	sampler = device.createSampler(samplerInfo);
-
-	vk::DescriptorSetLayoutBinding uniformLayoutBinding{};
-	uniformLayoutBinding.binding = 0;
-	uniformLayoutBinding.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
-	uniformLayoutBinding.descriptorCount = 1;
-	uniformLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
-	uniformLayoutBinding.pImmutableSamplers = nullptr;
-
-	vk::DescriptorSetLayoutBinding samplerLayoutBinding{};
-	samplerLayoutBinding.binding = 1;
-	samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-	samplerLayoutBinding.descriptorCount = 1;
-	samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
-	samplerLayoutBinding.pImmutableSamplers = nullptr;
-
-	std::array<vk::DescriptorSetLayoutBinding, 2> bindings{ uniformLayoutBinding, samplerLayoutBinding };
-
-	vk::DescriptorSetLayoutCreateInfo descriptorInfo{};
-	descriptorInfo.bindingCount = bindings.size();
-	descriptorInfo.pBindings = bindings.data();
-
-	descriptorSetLayout = device.createDescriptorSetLayout(descriptorInfo);
-
-	vk::PipelineLayoutCreateInfo layoutInfo{};
-	layoutInfo.setLayoutCount = 1;
-	layoutInfo.pSetLayouts = &descriptorSetLayout;
-	layoutInfo.pushConstantRangeCount = 0;
-	layoutInfo.pPushConstantRanges = nullptr;
-
-	pipelineLayout = device.createPipelineLayout(layoutInfo);
 }
 
 void createPipelines() {
+	vk::PipelineShaderStageCreateInfo computeShaderInfo{};
+	computeShaderInfo.stage = vk::ShaderStageFlagBits::eCompute;
+	computeShaderInfo.module = computeShader;
+	computeShaderInfo.pName = "main";
+	computeShaderInfo.pSpecializationInfo = nullptr;
+
 	vk::PipelineShaderStageCreateInfo vertexShaderInfo{};
 	vertexShaderInfo.stage = vk::ShaderStageFlagBits::eVertex;
 	vertexShaderInfo.module = vertexShader;
@@ -1003,24 +1072,32 @@ void createPipelines() {
 	viewportInfo.scissorCount = 1;
 	viewportInfo.pScissors = &scissor;
 
-	vk::GraphicsPipelineCreateInfo pipelineInfo{};
-	pipelineInfo.stageCount = renderShaderStages.size();
-	pipelineInfo.pStages = renderShaderStages.data();
-	pipelineInfo.pVertexInputState = &inputInfo;
-	pipelineInfo.pInputAssemblyState = &assemblyInfo;
-	pipelineInfo.pRasterizationState = &rasterizerInfo;
-	pipelineInfo.pMultisampleState = &multisamplingInfo;
-	pipelineInfo.pDepthStencilState = &depthStencil;
-	pipelineInfo.pColorBlendState = &blendInfo;
-	pipelineInfo.pViewportState = &viewportInfo;
-	pipelineInfo.pDynamicState = nullptr;
-	pipelineInfo.layout = pipelineLayout;
-	pipelineInfo.renderPass = renderPass;
-	pipelineInfo.subpass = 0;
-	pipelineInfo.basePipelineHandle = nullptr;
-	pipelineInfo.basePipelineIndex = -1;
+	vk::ComputePipelineCreateInfo computePipelineInfo{};
+	computePipelineInfo.basePipelineIndex = -1;
+	computePipelineInfo.basePipelineHandle = nullptr;
+	computePipelineInfo.layout = computePipelineLayout;
+	computePipelineInfo.stage = computeShaderInfo;
 
-	graphicsPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+	computePipeline = device.createComputePipeline(nullptr, computePipelineInfo).value;
+
+	vk::GraphicsPipelineCreateInfo graphicsPipelineInfo{};
+	graphicsPipelineInfo.stageCount = renderShaderStages.size();
+	graphicsPipelineInfo.pStages = renderShaderStages.data();
+	graphicsPipelineInfo.pVertexInputState = &inputInfo;
+	graphicsPipelineInfo.pInputAssemblyState = &assemblyInfo;
+	graphicsPipelineInfo.pRasterizationState = &rasterizerInfo;
+	graphicsPipelineInfo.pMultisampleState = &multisamplingInfo;
+	graphicsPipelineInfo.pDepthStencilState = &depthStencil;
+	graphicsPipelineInfo.pColorBlendState = &blendInfo;
+	graphicsPipelineInfo.pViewportState = &viewportInfo;
+	graphicsPipelineInfo.pDynamicState = nullptr;
+	graphicsPipelineInfo.layout = graphicsPipelineLayout;
+	graphicsPipelineInfo.renderPass = renderPass;
+	graphicsPipelineInfo.subpass = 0;
+	graphicsPipelineInfo.basePipelineHandle = nullptr;
+	graphicsPipelineInfo.basePipelineIndex = -1;
+
+	graphicsPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 
 	depthStencil.stencilTestEnable = true;
 	stencilOpState.passOp = vk::StencilOp::eReplace;
@@ -1029,7 +1106,7 @@ void createPipelines() {
 	for (auto index = 0u; index < details.portalCount; index++) {
 		stencilOpState.reference = index + 1;
 		depthStencil.front = stencilOpState;
-		portals.at(index).stencilPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+		portals.at(index).stencilPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 	}
 
 	stencilOpState.passOp = vk::StencilOp::eKeep;
@@ -1038,7 +1115,7 @@ void createPipelines() {
 	for (auto index = 0u; index < details.portalCount; index++) {
 		stencilOpState.reference = index + 1;
 		depthStencil.front = stencilOpState;
-		portals.at(index).renderPipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+		portals.at(index).renderPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 	}
 }
 
@@ -1166,7 +1243,7 @@ void createDescriptorSets() {
 
 	descriptorPool = device.createDescriptorPool(poolInfo);
 
-	std::vector<vk::DescriptorSetLayout> descriptorSetLayouts{ descriptorCount, descriptorSetLayout };
+	std::vector<vk::DescriptorSetLayout> descriptorSetLayouts{ descriptorCount, graphicsSetLayout };
 
 	vk::DescriptorSetAllocateInfo allocateInfo{};
 	allocateInfo.descriptorPool = descriptorPool;
@@ -1254,13 +1331,13 @@ void createCommandBuffers() {
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 		for (auto& mesh : meshes) {
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
 			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
 
 		for (auto& portal : portals) {
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &portal.mesh.descriptorSet, 1, &uniformOffset);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &portal.mesh.descriptorSet, 1, &uniformOffset);
 			commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
 		}
 
@@ -1273,7 +1350,7 @@ void createCommandBuffers() {
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
 			for (auto& mesh : meshes) {
-				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
+				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
 				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 			}
 		}
@@ -1363,17 +1440,17 @@ void updateScene(uint32_t imageIndex) {
 		auto coefficient = 0.0f, distance = glm::length(camera.position - previousPosition);
 		auto direction = glm::normalize(camera.position - previousPosition);
 
-		for (auto portal : portals) {
-			if (svh::epsilon < distance && glm::intersectRayPlane(previousPosition, direction, portal.origin, portal.normal, coefficient)) {
+		for (auto &portal : portals) {
+			if (svh::epsilon < distance && glm::intersectRayPlane(previousPosition, direction, portal.mesh.origin, portal.mesh.normal, coefficient)) {
 				auto point = previousPosition + coefficient * direction;
 
-				if (point.x >= portal.minBorders.x && point.y >= portal.minBorders.y && point.z >= portal.minBorders.z &&
-					point.x <= portal.maxBorders.x && point.y <= portal.maxBorders.y && point.z <= portal.maxBorders.z &&
+				if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&
+					point.x <= portal.mesh.maxBorders.x && point.y <= portal.mesh.maxBorders.y && point.z <= portal.mesh.maxBorders.z &&
 					0 <= coefficient && distance >= coefficient) {
 
-					camera.position = portal.transform * glm::vec4{ camera.position, 1.0f };
-					camera.direction = portal.transform * glm::vec4{ camera.direction, 0.0f };
-					camera.up = portal.transform * glm::vec4{ camera.up, 0.0f };
+					camera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
+					camera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
+					camera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
 
 					previousPosition = camera.position;
 
@@ -1396,9 +1473,9 @@ void updateScene(uint32_t imageIndex) {
 		auto& portal = portals.at(portalIndex);
 
 		svh::Camera portalCamera{};
-		portalCamera.position = portal.transform * glm::vec4{ camera.position, 1.0f };
-		portalCamera.direction = portal.transform * glm::vec4{ camera.direction, 0.0f };
-		portalCamera.up = portal.transform * glm::vec4{ camera.up, 0.0f };
+		portalCamera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
+		portalCamera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
+		portalCamera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
 
 		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
 		auto portalProjection = glm::perspective(glm::radians(45.0f),
@@ -1439,7 +1516,7 @@ void draw() {
 
 		state.previousTime = state.currentTime;
 		state.currentTime = std::chrono::high_resolution_clock::now();
-		state.timeDelta = std::chrono::duration<float, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
+		state.timeDelta = std::chrono::duration<float_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 		state.checkPoint += state.timeDelta;
 		state.frameCount++;
 
@@ -1527,12 +1604,15 @@ void clear() {
 		device.freeMemory(portal.mesh.texture.memory);
 	}
 	device.destroyPipeline(graphicsPipeline);
-	device.destroyPipelineLayout(pipelineLayout);
-	device.destroyDescriptorSetLayout(descriptorSetLayout);
+	device.destroyPipeline(computePipeline);
+	device.destroyPipelineLayout(graphicsPipelineLayout);
+	device.destroyPipelineLayout(computePipelineLayout);
+	device.destroyDescriptorSetLayout(graphicsSetLayout);
+	device.destroyDescriptorSetLayout(computeSetLayout);
 	device.destroySampler(sampler);
-	device.destroyShaderModule(stencilShader);
 	device.destroyShaderModule(fragmentShader);
 	device.destroyShaderModule(vertexShader);
+	device.destroyShaderModule(computeShader);
 	device.destroyRenderPass(renderPass);
 	for (auto& swapchainView : swapchainViews)
 		device.destroyImageView(swapchainView);

@@ -105,18 +105,27 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
+
+		glm::vec3 origin;
+		glm::vec3 normal;
+		glm::vec3 minBorders;
+		glm::vec3 maxBorders;
+
+		uint8_t sourceRoom;
+		glm::mat4 sourceTransform;
+
 		Image texture;
 		vk::DescriptorSet descriptorSet;
 	};
 
 	struct Portal {
 		Mesh mesh;
-		glm::vec3 origin;
-		glm::vec3 normal;
-		glm::vec3 minBorders;
-		glm::vec3 maxBorders;
-		glm::mat4 matrix;
-		glm::mat4 transform;
+		uint8_t pair;
+		uint8_t targetRoom;
+
+		glm::mat4 targetTransform;
+		glm::mat4 cameraTransform;
+
 		vk::Pipeline stencilPipeline;
 		vk::Pipeline renderPipeline;
 	};

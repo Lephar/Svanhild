@@ -1312,6 +1312,7 @@
     <None Include="shaders\vertex.vert" />
     <None Include="shaders\fragment.spv" />
     <None Include="shaders\vertex.spv" />
+    <None Include="shaders\compute.comp" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="libraries\glfw3.lib" />

@@ -619,6 +619,7 @@
     <None Include="models\Room1.glb" />
     <None Include="models\Room2.glb" />
     <None Include="reference\CMakeSettings.json" />
+    <None Include="shaders\compute.comp" />
     <None Include="shaders\fragment.frag" />
     <None Include="shaders\fragment.spv" />
     <None Include="shaders\vertex.spv" />
