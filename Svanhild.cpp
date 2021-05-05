@@ -11,6 +11,7 @@ svh::Camera observerCamera, playerCamera;
 glm::vec3 previousPosition;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
+std::vector<svh::Image> textures;
 std::vector<svh::Mesh> meshes;
 std::vector<svh::Portal> portals;
 
@@ -521,7 +522,7 @@ svh::Image loadTexture(uint32_t width, uint32_t height, uint32_t levels, vk::For
 	return image;
 }
 
-void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform, svh::Type type, uint8_t sourceRoom, uint8_t targetRoom) {
+void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 transform, svh::Type type, uint32_t textureOffset, uint8_t sourceRoom, uint8_t targetRoom) {
 	for (auto& primitive : meshData.primitives) {
 		auto& indexReference = modelData.bufferViews.at(primitive.indices);
 		auto& indexData = modelData.buffers.at(indexReference.buffer);
@@ -559,6 +560,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 
 		mesh.vertexOffset = vertices.size();
 		mesh.vertexLength = texcoords.size();
+		mesh.textureIndex = textureOffset + primitive.material;
 
 		for (auto index = 0u; index < mesh.vertexLength; index++) {
 			svh::Vertex vertex{};
@@ -568,17 +570,8 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			vertices.push_back(vertex);
 		}
 
-		auto& material = modelData.materials.at(primitive.material);
-		for (auto& value : material.values) {
-			if (!value.first.compare("baseColorTexture")) {
-				auto& image = modelData.images.at(value.second.TextureIndex());
-				mesh.texture = loadTexture(image.width, image.height, details.mipLevels, details.imageFormat, image.image);
-				break;
-			}
-		}
-
 		auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
-		auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ std::numeric_limits<float_t>::min() };
+		auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ -std::numeric_limits<float_t>::max() };
 
 		for (auto index = 0u; index < mesh.vertexLength; index++) {
 			auto& vertex = vertices.at(mesh.vertexOffset + index);
@@ -606,7 +599,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 			meshes.push_back(mesh);
 		}
 		
-		else {
+		else if(type == svh::Type::Portal) {
 			svh::Portal portal{};
 			portal.mesh = mesh;
 
@@ -616,7 +609,7 @@ void loadMesh(tinygltf::Model& modelData, tinygltf::Mesh& meshData, glm::mat4 tr
 	}
 }
 
-void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform, svh::Type type, uint8_t sourceRoom, uint8_t targetRoom) {
+void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 transform, svh::Type type, uint32_t textureOffset, uint8_t sourceRoom, uint8_t targetRoom) {
 	glm::mat4 scale{ 1.0f }, rotation{ 1.0f }, translation{ 1.0f };
 
 	if (!nodeData.rotation.empty())
@@ -641,10 +634,10 @@ void loadNode(tinygltf::Model& modelData, tinygltf::Node& nodeData, glm::mat4 tr
 
 	else {
 		if (nodeData.mesh >= 0 && nodeData.mesh < modelData.meshes.size())
-			loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform, type, sourceRoom, targetRoom);
+			loadMesh(modelData, modelData.meshes.at(nodeData.mesh), transform, type, textureOffset, sourceRoom, targetRoom);
 
 		for (auto& childIndex : nodeData.children)
-			loadNode(modelData, modelData.nodes.at(childIndex), transform, type, sourceRoom, targetRoom);
+			loadNode(modelData, modelData.nodes.at(childIndex), transform, type, textureOffset, sourceRoom, targetRoom);
 	}
 }
 
@@ -663,9 +656,23 @@ void loadModel(std::string filename, svh::Type type, uint8_t sourceRoom = 0, uin
 		return;
 #endif
 
+	uint32_t textureOffset = textures.size();
+
+	if(type != svh::Type::Player && type != svh::Type::Observer) {
+		for(auto& material : modelData.materials) {
+			for (auto& value : material.values) {
+				if (!value.first.compare("baseColorTexture")) {
+					auto& image = modelData.images.at(value.second.TextureIndex());
+					textures.push_back(loadTexture(image.width, image.height, details.mipLevels, details.imageFormat, image.image));
+					break;
+				}
+			}
+		}
+	}
+
 	auto& scene = modelData.scenes.at(modelData.defaultScene);
 	for (auto& nodeIndex : scene.nodes)
-		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type, sourceRoom, targetRoom);
+		loadNode(modelData, modelData.nodes.at(nodeIndex), glm::mat4{ 1.0f }, type, textureOffset, sourceRoom, targetRoom);
 }
 
 void bindPortals(uint32_t blueIndex, uint32_t orangeIndex) {
@@ -680,21 +687,29 @@ void bindPortals(uint32_t blueIndex, uint32_t orangeIndex) {
 	bluePortal.targetTransform = orangePortal.mesh.sourceTransform;
 	orangePortal.targetTransform = bluePortal.mesh.sourceTransform;
 
-	bluePortal.cameraTransform = bluePortal.targetTransform - bluePortal.mesh.sourceTransform;
-	orangePortal.cameraTransform = orangePortal.targetTransform - orangePortal.mesh.sourceTransform;
+	bluePortal.cameraTransform = bluePortal.targetTransform * glm::inverse(bluePortal.mesh.sourceTransform);
+	orangePortal.cameraTransform = orangePortal.targetTransform * glm::inverse(orangePortal.mesh.sourceTransform);
 }
 
 void createScene() {
+	/*loadModel("environment2/observer.glb", svh::Type::Observer);
+	loadModel("environment2/player.glb", svh::Type::Player);
+
+	loadModel("environment2/portal12.glb", svh::Type::Portal, 1, 2);
+	loadModel("environment2/portal21.glb", svh::Type::Portal, 2, 1);
+	loadModel("environment2/portal23.glb", svh::Type::Portal, 2, 3);
+	loadModel("environment2/portal32.glb", svh::Type::Portal, 3, 2);
+
+	bindPortals(0, 1);
+	bindPortals(2, 3);
+
+	loadModel("environment2/room1.glb", svh::Type::Mesh, 1);
+	loadModel("environment2/room2.glb", svh::Type::Mesh, 2);
+	loadModel("environment2/room3.glb", svh::Type::Mesh, 3);*/
+
 	loadModel("environment3/models/observer.glb", svh::Type::Observer);
 	loadModel("environment3/models/player.glb", svh::Type::Player);
-
-	loadModel("environment3/models/room1.glb", svh::Type::Mesh, 1);
-	/*loadModel("environment3/models/room2.glb", svh::Type::Mesh, 2);
-	loadModel("environment3/models/room3.glb", svh::Type::Mesh, 3);
-	loadModel("environment3/models/room4.glb", svh::Type::Mesh, 4);
-	loadModel("environment3/models/room5.glb", svh::Type::Mesh, 5);
-	loadModel("environment3/models/room6.glb", svh::Type::Mesh, 6);
-
+	
 	loadModel("environment3/models/portal12.glb", svh::Type::Portal, 1, 2);
 	loadModel("environment3/models/portal21.glb", svh::Type::Portal, 2, 1);
 	loadModel("environment3/models/portal13.glb", svh::Type::Portal, 1, 3);
@@ -710,7 +725,14 @@ void createScene() {
 	bindPortals(2, 3);
 	bindPortals(4, 5);
 	bindPortals(6, 7);
-	bindPortals(8, 9);*/
+	bindPortals(8, 9);
+
+	loadModel("environment3/models/room1.glb", svh::Type::Mesh, 1);
+	/*loadModel("environment3/models/room2.glb", svh::Type::Mesh, 2);
+	loadModel("environment3/models/room3.glb", svh::Type::Mesh, 3);
+	loadModel("environment3/models/room4.glb", svh::Type::Mesh, 4);
+	loadModel("environment3/models/room5.glb", svh::Type::Mesh, 5);
+	loadModel("environment3/models/room6.glb", svh::Type::Mesh, 6);*/
 }
 
 //TODO: Implement swapchain recreation on window resize
@@ -1188,43 +1210,8 @@ void createElementBuffers() {
 		uniformBuffer.buffer, uniformBuffer.memory);
 }
 
-void updateDescriptorSet(svh::Mesh& mesh) {
-	vk::DescriptorBufferInfo uniformInfo{};
-	uniformInfo.buffer = uniformBuffer.buffer;
-	uniformInfo.offset = 0;
-	uniformInfo.range = details.uniformAlignment;
-
-	vk::DescriptorImageInfo samplerInfo{};
-	samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-	samplerInfo.imageView = mesh.texture.view;
-	samplerInfo.sampler = sampler;
-
-	vk::WriteDescriptorSet uniformWrite{};
-	uniformWrite.dstSet = mesh.descriptorSet;
-	uniformWrite.dstBinding = 0;
-	uniformWrite.dstArrayElement = 0;
-	uniformWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
-	uniformWrite.descriptorCount = 1;
-	uniformWrite.pBufferInfo = &uniformInfo;
-	uniformWrite.pImageInfo = nullptr;
-	uniformWrite.pTexelBufferView = nullptr;
-
-	vk::WriteDescriptorSet samplerWrite{};
-	samplerWrite.dstSet = mesh.descriptorSet;
-	samplerWrite.dstBinding = 1;
-	samplerWrite.dstArrayElement = 0;
-	samplerWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-	samplerWrite.descriptorCount = 1;
-	samplerWrite.pBufferInfo = nullptr;
-	samplerWrite.pImageInfo = &samplerInfo;
-	samplerWrite.pTexelBufferView = nullptr;
-
-	std::array<vk::WriteDescriptorSet, 2> descriptorWrites{ uniformWrite, samplerWrite };
-	device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
-}
-
 void createDescriptorSets() {
-	auto descriptorCount = details.portalCount + details.meshCount;
+	auto descriptorCount = textures.size();
 
 	vk::DescriptorPoolSize uniformSize{};
 	uniformSize.type = vk::DescriptorType::eUniformBufferDynamic;
@@ -1252,16 +1239,42 @@ void createDescriptorSets() {
 
 	auto descriptorSets = device.allocateDescriptorSets(allocateInfo);
 
-	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-		auto& mesh = portals.at(portalIndex).mesh;
-		mesh.descriptorSet = descriptorSets.at(portalIndex);
-		updateDescriptorSet(mesh);
-	}
+	for (auto descriptorIndex = 0u; descriptorIndex < descriptorCount; descriptorIndex++) {
+		auto& texture = textures.at(descriptorIndex);
+		texture.descriptor = descriptorSets.at(descriptorIndex);
 
-	for (auto meshIndex = 0u; meshIndex < details.meshCount; meshIndex++) {
-		auto& mesh = meshes.at(meshIndex);
-		mesh.descriptorSet = descriptorSets.at(details.portalCount + meshIndex);
-		updateDescriptorSet(mesh);
+		vk::DescriptorBufferInfo uniformInfo{};
+		uniformInfo.buffer = uniformBuffer.buffer;
+		uniformInfo.offset = 0;
+		uniformInfo.range = details.uniformAlignment;
+
+		vk::DescriptorImageInfo samplerInfo{};
+		samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+		samplerInfo.imageView = texture.view;
+		samplerInfo.sampler = sampler;
+
+		vk::WriteDescriptorSet uniformWrite{};
+		uniformWrite.dstSet = texture.descriptor;
+		uniformWrite.dstBinding = 0;
+		uniformWrite.dstArrayElement = 0;
+		uniformWrite.descriptorType = vk::DescriptorType::eUniformBufferDynamic;
+		uniformWrite.descriptorCount = 1;
+		uniformWrite.pBufferInfo = &uniformInfo;
+		uniformWrite.pImageInfo = nullptr;
+		uniformWrite.pTexelBufferView = nullptr;
+
+		vk::WriteDescriptorSet samplerWrite{};
+		samplerWrite.dstSet = texture.descriptor;
+		samplerWrite.dstBinding = 1;
+		samplerWrite.dstArrayElement = 0;
+		samplerWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+		samplerWrite.descriptorCount = 1;
+		samplerWrite.pBufferInfo = nullptr;
+		samplerWrite.pImageInfo = &samplerInfo;
+		samplerWrite.pTexelBufferView = nullptr;
+
+		std::array<vk::WriteDescriptorSet, 2> descriptorWrites{ uniformWrite, samplerWrite };
+		device.updateDescriptorSets(descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
 	}
 }
 
@@ -1331,13 +1344,13 @@ void createCommandBuffers() {
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 		for (auto& mesh : meshes) {
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
 			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
-
+		
 		for (auto& portal : portals) {
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &portal.mesh.descriptorSet, 1, &uniformOffset);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(portal.mesh.textureIndex).descriptor, 1, &uniformOffset);
 			commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
 		}
 
@@ -1350,11 +1363,11 @@ void createCommandBuffers() {
 			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
 			for (auto& mesh : meshes) {
-				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &mesh.descriptorSet, 1, &uniformOffset);
+				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
 				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 			}
 		}
-
+		
 		commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 		commandBuffer.endRenderPass();
 		static_cast<void>(commandBuffer.end());
@@ -1472,10 +1485,8 @@ void updateScene(uint32_t imageIndex) {
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 		auto& portal = portals.at(portalIndex);
 
-		svh::Camera portalCamera{};
-		portalCamera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
-		portalCamera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
-		portalCamera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
+		svh::Camera portalCamera = camera;
+		portalCamera.position = portal.cameraTransform * glm::vec4{ portalCamera.position, 1.0f };
 
 		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
 		auto portalProjection = glm::perspective(glm::radians(45.0f),
@@ -1591,17 +1602,14 @@ void clear() {
 	device.destroyImageView(depthImage.view);
 	device.destroyImage(depthImage.image);
 	device.freeMemory(depthImage.memory);
-	for (auto& mesh : meshes) {
-		device.destroyImageView(mesh.texture.view);
-		device.destroyImage(mesh.texture.image);
-		device.freeMemory(mesh.texture.memory);
+	for (auto& texture : textures) {
+		device.destroyImageView(texture.view);
+		device.destroyImage(texture.image);
+		device.freeMemory(texture.memory);
 	}
 	for (auto& portal : portals) {
 		device.destroyPipeline(portal.renderPipeline);
 		device.destroyPipeline(portal.stencilPipeline);
-		device.destroyImageView(portal.mesh.texture.view);
-		device.destroyImage(portal.mesh.texture.image);
-		device.freeMemory(portal.mesh.texture.memory);
 	}
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipeline(computePipeline);

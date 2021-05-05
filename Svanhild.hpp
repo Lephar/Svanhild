@@ -98,6 +98,7 @@ namespace svh {
 		vk::Image image;
 		vk::ImageView view;
 		vk::DeviceMemory memory;
+		vk::DescriptorSet descriptor;
 	};
 
 	struct Mesh {
@@ -105,6 +106,7 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
+		uint32_t textureIndex;
 
 		glm::vec3 origin;
 		glm::vec3 normal;
@@ -113,9 +115,6 @@ namespace svh {
 
 		uint8_t sourceRoom;
 		glm::mat4 sourceTransform;
-
-		Image texture;
-		vk::DescriptorSet descriptorSet;
 	};
 
 	struct Portal {
