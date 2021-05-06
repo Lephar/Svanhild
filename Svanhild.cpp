@@ -1,5 +1,5 @@
 #include "Svanhild.hpp"
-
+	
 GLFWwindow* window;
 tinygltf::TinyGLTF objectLoader;
 shaderc::Compiler shaderCompiler;
@@ -316,6 +316,7 @@ void createDevice() {
 	deviceInfo.ppEnabledExtensionNames = extensions.data();
 
 	vk::CommandPoolCreateInfo poolInfo{};
+	poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
 	poolInfo.queueFamilyIndex = familyIndex;
 
 	device = physicalDevice.createDevice(deviceInfo);
@@ -692,7 +693,7 @@ void bindPortals(uint32_t blueIndex, uint32_t orangeIndex) {
 }
 
 void createScene() {
-	/*loadModel("environment2/observer.glb", svh::Type::Observer);
+	loadModel("environment2/observer.glb", svh::Type::Observer);
 	loadModel("environment2/player.glb", svh::Type::Player);
 
 	loadModel("environment2/portal12.glb", svh::Type::Portal, 1, 2);
@@ -705,9 +706,9 @@ void createScene() {
 
 	loadModel("environment2/room1.glb", svh::Type::Mesh, 1);
 	loadModel("environment2/room2.glb", svh::Type::Mesh, 2);
-	loadModel("environment2/room3.glb", svh::Type::Mesh, 3);*/
+	loadModel("environment2/room3.glb", svh::Type::Mesh, 3);
 
-	loadModel("environment3/models/observer.glb", svh::Type::Observer);
+	/*loadModel("environment3/models/observer.glb", svh::Type::Observer);
 	loadModel("environment3/models/player.glb", svh::Type::Player);
 	
 	loadModel("environment3/models/portal12.glb", svh::Type::Portal, 1, 2);
@@ -728,7 +729,7 @@ void createScene() {
 	bindPortals(8, 9);
 
 	loadModel("environment3/models/room1.glb", svh::Type::Mesh, 1);
-	/*loadModel("environment3/models/room2.glb", svh::Type::Mesh, 2);
+	loadModel("environment3/models/room2.glb", svh::Type::Mesh, 2);
 	loadModel("environment3/models/room3.glb", svh::Type::Mesh, 3);
 	loadModel("environment3/models/room4.glb", svh::Type::Mesh, 4);
 	loadModel("environment3/models/room5.glb", svh::Type::Mesh, 5);
@@ -1285,93 +1286,6 @@ void createCommandBuffers() {
 	allocateInfo.commandBufferCount = details.imageCount;
 
 	commandBuffers = device.allocateCommandBuffers(allocateInfo);
-
-	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
-		auto& commandBuffer = commandBuffers.at(imageIndex);
-		auto uniformOffset = imageIndex * details.uniformStride + details.portalCount * details.uniformAlignment;
-
-		vk::DeviceSize bufferOffset = 0;
-
-		vk::ClearValue colorClear{};
-		colorClear.color.float32.at(0) = 0.0f;
-		colorClear.color.float32.at(1) = 0.0f;
-		colorClear.color.float32.at(2) = 0.0f;
-		colorClear.color.float32.at(3) = 1.0f;
-
-		vk::ClearValue depthStencilClear{};
-		depthStencilClear.depthStencil.depth = 1.0f;
-		depthStencilClear.depthStencil.stencil = 0;
-
-		std::array<vk::ClearValue, 2> clearValues{ colorClear, depthStencilClear };
-
-		vk::Offset2D areaOffset{};
-		areaOffset.x = 0;
-		areaOffset.y = 0;
-
-		vk::Rect2D area{};
-		area.offset = areaOffset;
-		area.extent = details.swapchainExtent;
-
-		vk::ClearRect clearArea{};
-		clearArea.baseArrayLayer = 0;
-		clearArea.layerCount = 1;
-		clearArea.rect = area;
-
-		vk::ClearAttachment depthClearAttachment{};
-		depthClearAttachment.aspectMask = vk::ImageAspectFlagBits::eDepth;
-		depthClearAttachment.clearValue = depthStencilClear;
-		depthClearAttachment.colorAttachment = -1;
-
-		vk::ClearAttachment stencilClearAttachment{};
-		stencilClearAttachment.aspectMask = vk::ImageAspectFlagBits::eStencil;
-		stencilClearAttachment.clearValue = depthStencilClear;
-		stencilClearAttachment.colorAttachment = -1;
-
-		vk::CommandBufferBeginInfo beginInfo{};
-		beginInfo.pInheritanceInfo = nullptr;
-
-		vk::RenderPassBeginInfo renderPassInfo{};
-		renderPassInfo.renderPass = renderPass;
-		renderPassInfo.framebuffer = framebuffers.at(imageIndex);
-		renderPassInfo.renderArea = area;
-		renderPassInfo.clearValueCount = clearValues.size();
-		renderPassInfo.pClearValues = clearValues.data();
-
-		static_cast<void>(commandBuffer.begin(beginInfo));
-		commandBuffer.bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
-		commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer.buffer, &bufferOffset);
-		commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
-		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
-
-		for (auto& mesh : meshes) {
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
-			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
-		}
-		
-		for (auto& portal : portals) {
-			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(portal.mesh.textureIndex).descriptor, 1, &uniformOffset);
-			commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
-		}
-
-		commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
-
-		for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-			auto& portal = portals.at(portalIndex);
-			uniformOffset = imageIndex * details.uniformStride + portalIndex * details.uniformAlignment;
-
-			commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
-
-			for (auto& mesh : meshes) {
-				commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
-				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
-			}
-		}
-		
-		commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
-		commandBuffer.endRenderPass();
-		static_cast<void>(commandBuffer.end());
-	}
 }
 
 void createSyncObject() {
@@ -1516,6 +1430,93 @@ void updateScene(uint32_t imageIndex) {
 	device.unmapMemory(uniformBuffer.memory);
 }
 
+void updateCommandBuffers(uint32_t imageIndex) {
+	auto& commandBuffer = commandBuffers.at(imageIndex);
+	auto uniformOffset = imageIndex * details.uniformStride + details.portalCount * details.uniformAlignment;
+
+	vk::DeviceSize bufferOffset = 0;
+
+	vk::ClearValue colorClear{};
+	colorClear.color.float32.at(0) = 0.0f;
+	colorClear.color.float32.at(1) = 0.0f;
+	colorClear.color.float32.at(2) = 0.0f;
+	colorClear.color.float32.at(3) = 1.0f;
+
+	vk::ClearValue depthStencilClear{};
+	depthStencilClear.depthStencil.depth = 1.0f;
+	depthStencilClear.depthStencil.stencil = 0;
+
+	std::array<vk::ClearValue, 2> clearValues{ colorClear, depthStencilClear };
+
+	vk::Offset2D areaOffset{};
+	areaOffset.x = 0;
+	areaOffset.y = 0;
+
+	vk::Rect2D area{};
+	area.offset = areaOffset;
+	area.extent = details.swapchainExtent;
+
+	vk::ClearRect clearArea{};
+	clearArea.baseArrayLayer = 0;
+	clearArea.layerCount = 1;
+	clearArea.rect = area;
+
+	vk::ClearAttachment depthClearAttachment{};
+	depthClearAttachment.aspectMask = vk::ImageAspectFlagBits::eDepth;
+	depthClearAttachment.clearValue = depthStencilClear;
+	depthClearAttachment.colorAttachment = -1;
+
+	vk::ClearAttachment stencilClearAttachment{};
+	stencilClearAttachment.aspectMask = vk::ImageAspectFlagBits::eStencil;
+	stencilClearAttachment.clearValue = depthStencilClear;
+	stencilClearAttachment.colorAttachment = -1;
+
+	vk::CommandBufferBeginInfo beginInfo{};
+	beginInfo.pInheritanceInfo = nullptr;
+
+	vk::RenderPassBeginInfo renderPassInfo{};
+	renderPassInfo.renderPass = renderPass;
+	renderPassInfo.framebuffer = framebuffers.at(imageIndex);
+	renderPassInfo.renderArea = area;
+	renderPassInfo.clearValueCount = clearValues.size();
+	renderPassInfo.pClearValues = clearValues.data();
+
+	static_cast<void>(commandBuffer.begin(beginInfo));
+	commandBuffer.bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
+	commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer.buffer, &bufferOffset);
+	commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+
+	for (auto& mesh : meshes) {
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
+		commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+	}
+
+	for (auto& portal : portals) {
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(portal.mesh.textureIndex).descriptor, 1, &uniformOffset);
+		commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
+	}
+
+	commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
+
+	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
+		auto& portal = portals.at(portalIndex);
+		uniformOffset = imageIndex * details.uniformStride + portalIndex * details.uniformAlignment;
+
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
+
+		for (auto& mesh : meshes) {
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
+			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+		}
+	}
+
+	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
+	commandBuffer.endRenderPass();
+	static_cast<void>(commandBuffer.end());
+}
+
 //TODO: Split present and retrieve
 void draw() {
 	state.frameCount = 0;
@@ -1531,8 +1532,6 @@ void draw() {
 		state.checkPoint += state.timeDelta;
 		state.frameCount++;
 
-		updateScene(state.currentImage);
-
 		static_cast<void>(device.waitForFences(1, &frameFences[state.currentImage], true, std::numeric_limits<uint64_t>::max()));
 		auto imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(),
 			availableSemaphores.at(state.currentImage), nullptr).value;
@@ -1541,6 +1540,9 @@ void draw() {
 			static_cast<void>(device.waitForFences(1, &orderFences.at(imageIndex), true, std::numeric_limits<uint64_t>::max()));
 
 		orderFences.at(imageIndex) = frameFences.at(state.currentImage);
+
+		updateScene(state.currentImage);
+		updateCommandBuffers(state.currentImage);
 
 		std::array<vk::Semaphore, 1> waitSemaphores{ availableSemaphores[state.currentImage] };
 		std::array<vk::Semaphore, 1> signalSemaphores{ finishedSemaphores[state.currentImage] };
@@ -1555,9 +1557,6 @@ void draw() {
 		submitInfo.signalSemaphoreCount = signalSemaphores.size();
 		submitInfo.pSignalSemaphores = signalSemaphores.data();
 
-		static_cast<void>(device.resetFences(1, &frameFences.at(state.currentImage)));
-		static_cast<void>(queue.submit(1, &submitInfo, frameFences.at(state.currentImage)));
-
 		vk::PresentInfoKHR presentInfo{};
 		presentInfo.waitSemaphoreCount = signalSemaphores.size();
 		presentInfo.pWaitSemaphores = signalSemaphores.data();
@@ -1566,6 +1565,8 @@ void draw() {
 		presentInfo.pImageIndices = &imageIndex;
 		presentInfo.pResults = nullptr;
 
+		static_cast<void>(device.resetFences(1, &frameFences.at(state.currentImage)));
+		static_cast<void>(queue.submit(1, &submitInfo, frameFences.at(state.currentImage)));
 		static_cast<void>(queue.presentKHR(presentInfo));
 		state.currentImage = (state.currentImage + 1) % details.imageCount;
 
