@@ -1,5 +1,5 @@
 #include "Svanhild.hpp"
-	
+
 GLFWwindow* window;
 tinygltf::TinyGLTF objectLoader;
 shaderc::Compiler shaderCompiler;
@@ -19,8 +19,9 @@ vk::Instance instance;
 vk::SurfaceKHR surface;
 vk::PhysicalDevice physicalDevice;
 vk::Device device;
-vk::Queue queue;
-vk::CommandPool commandPool;
+uint32_t queueFamilyIndex;
+vk::Queue mainQueue;
+vk::CommandPool mainCommandPool;
 svh::Details details;
 vk::SwapchainKHR swapchain;
 std::vector<vk::Image> swapchainImages;
@@ -31,13 +32,24 @@ vk::ShaderModule computeShader, vertexShader, fragmentShader;
 vk::DescriptorSetLayout computeSetLayout, graphicsSetLayout;
 vk::PipelineLayout computePipelineLayout, graphicsPipelineLayout;
 vk::Pipeline computePipeline, graphicsPipeline;
-svh::Image colorImage, depthImage;
+std::vector <svh::Image> colorImages, depthImages;
 std::vector<vk::Framebuffer> framebuffers;
 svh::Buffer indexBuffer, vertexBuffer, uniformBuffer;
 vk::DescriptorPool descriptorPool;
+
+uint8_t* data;
+
+std::vector<vk::Queue> concurrentQueues;
+std::vector<vk::CommandPool> threadCommandPools;
 std::vector<vk::CommandBuffer> commandBuffers;
-std::vector<vk::Fence> frameFences, orderFences;
-std::vector<vk::Semaphore> availableSemaphores, finishedSemaphores;
+
+std::vector<std::thread> renderThreads;
+std::vector<vk::Fence> submitFences;
+std::vector<vk::Semaphore> submitSemaphores, presentSemaphores;
+std::vector<std::unique_ptr<std::binary_semaphore>> swapchainSemaphores, threadSemaphores;
+
+std::mutex acquireMutex;
+std::binary_semaphore acquireSemaphore(1);
 
 #ifndef NDEBUG
 
@@ -125,7 +137,7 @@ void resizeEvent(GLFWwindow* handle, int width, int height) {
 }
 
 void initializeControls() {
-	controls.observer = 0u;
+	controls.observer = 1u;
 	controls.deltaX = 0.0f;
 	controls.deltaY = 0.0f;
 	controls.keyW = 0u;
@@ -154,7 +166,7 @@ void initializeCore() {
 	glfwSetKeyCallback(window, keyboardCallback);
 	glfwSetCursorPosCallback(window, mouseCallback);
 	glfwSetFramebufferSizeCallback(window, resizeEvent);
-	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	glfwGetCursorPos(window, &controls.mouseX, &controls.mouseY);
 
 	auto extensionCount = 0u;
@@ -253,7 +265,10 @@ svh::Details generateDetails() {
 	surfaceCapabilities.currentExtent.height = std::max(surfaceCapabilities.minImageExtent.height,
 		std::min(surfaceCapabilities.maxImageExtent.height, surfaceCapabilities.currentExtent.height));
 
-	temporaryDetails.imageCount = std::min(surfaceCapabilities.minImageCount + 1, surfaceCapabilities.maxImageCount);
+	uint32_t extraImages = 1;
+	temporaryDetails.minImageCount = surfaceCapabilities.minImageCount;
+	temporaryDetails.maxImageCount = surfaceCapabilities.maxImageCount ? surfaceCapabilities.maxImageCount : surfaceCapabilities.minImageCount + extraImages;
+	temporaryDetails.imageCount = std::min(temporaryDetails.minImageCount + extraImages, temporaryDetails.maxImageCount);
 	temporaryDetails.swapchainExtent = surfaceCapabilities.currentExtent;
 	temporaryDetails.swapchainTransform = surfaceCapabilities.currentTransform;
 
@@ -297,16 +312,16 @@ svh::Details generateDetails() {
 void createDevice() {
 	physicalDevice = pickPhysicalDevice();
 	details = generateDetails();
-	auto familyIndex = selectQueueFamily();
+	queueFamilyIndex = selectQueueFamily();
 
-	auto queuePriority = 1.0f;
 	vk::PhysicalDeviceFeatures deviceFeatures{};
 	std::vector<const char*> extensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+	std::vector<float> queuePriorities( details.maxImageCount + 1, 1.0f );
 
 	vk::DeviceQueueCreateInfo queueInfo{};
-	queueInfo.queueFamilyIndex = familyIndex;
-	queueInfo.queueCount = 1;
-	queueInfo.pQueuePriorities = &queuePriority;
+	queueInfo.queueFamilyIndex = queueFamilyIndex;
+	queueInfo.queueCount = details.maxImageCount + 1;
+	queueInfo.pQueuePriorities = queuePriorities.data();
 
 	vk::DeviceCreateInfo deviceInfo{};
 	deviceInfo.queueCreateInfoCount = 1;
@@ -317,11 +332,16 @@ void createDevice() {
 
 	vk::CommandPoolCreateInfo poolInfo{};
 	poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-	poolInfo.queueFamilyIndex = familyIndex;
+	poolInfo.queueFamilyIndex = queueFamilyIndex;
 
 	device = physicalDevice.createDevice(deviceInfo);
-	queue = device.getQueue(familyIndex, 0);
-	commandPool = device.createCommandPool(poolInfo);
+
+	mainQueue = device.getQueue(queueFamilyIndex, 0);
+	concurrentQueues.reserve(details.maxImageCount);
+	for (auto queueIndex = 0u; queueIndex < details.maxImageCount; queueIndex++)
+		concurrentQueues.push_back(device.getQueue(queueFamilyIndex, queueIndex + 1));
+
+	mainCommandPool = device.createCommandPool(poolInfo);
 }
 
 VkImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags flags, uint32_t mipLevels) {
@@ -401,7 +421,7 @@ void createImage(uint32_t imageWidth, uint32_t imageHeight, uint32_t mipLevels, 
 vk::CommandBuffer beginSingleTimeCommand() {
 	vk::CommandBufferAllocateInfo allocateInfo{};
 	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
-	allocateInfo.commandPool = commandPool;
+	allocateInfo.commandPool = mainCommandPool;
 	allocateInfo.commandBufferCount = 1;
 
 	vk::CommandBufferBeginInfo beginInfo{};
@@ -419,9 +439,9 @@ void endSingleTimeCommand(vk::CommandBuffer commandBuffer) {
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &commandBuffer;
 
-	static_cast<void>(queue.submit(1, &submitInfo, nullptr));
-	static_cast<void>(queue.waitIdle());
-	device.freeCommandBuffers(commandPool, 1, &commandBuffer);
+	static_cast<void>(mainQueue.submit(1, &submitInfo, nullptr));
+	static_cast<void>(mainQueue.waitIdle());
+	device.freeCommandBuffers(mainCommandPool, 1, &commandBuffer);
 }
 
 void copyBuffer(vk::Buffer srcBuffer, vk::Buffer dstBuffer, vk::DeviceSize size) {
@@ -759,6 +779,7 @@ void createSwapchain() {
 	swapchain = device.createSwapchainKHR(swapchainInfo);
 	swapchainImages = device.getSwapchainImagesKHR(swapchain);
 	details.imageCount = swapchainImages.size();
+	details.concurrentImageCount = details.imageCount - details.minImageCount + 1;
 
 	for (auto& swapchainImage : swapchainImages)
 		swapchainViews.push_back(createImageView(swapchainImage, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1));
@@ -1143,18 +1164,24 @@ void createPipelines() {
 }
 
 void createFramebuffers() {
-	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
-		details.surfaceFormat.format, vk::ImageTiling::eOptimal,
-		vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-		vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.image, colorImage.memory);
-	colorImage.view = createImageView(colorImage.image, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1);
-
-	createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
-		details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
-		vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.image, depthImage.memory);
-	depthImage.view = createImageView(depthImage.image, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
+	colorImages.reserve(details.imageCount);
+	depthImages.reserve(details.imageCount);
 
 	for (auto& swapchainView : swapchainViews) {
+		svh::Image colorImage, depthImage;
+
+		createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
+			details.surfaceFormat.format, vk::ImageTiling::eOptimal,
+			vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+			vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage.image, colorImage.memory);
+		colorImage.view = createImageView(colorImage.image, details.surfaceFormat.format, vk::ImageAspectFlagBits::eColor, 1);
+
+
+		createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
+			details.depthStencilFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
+			vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage.image, depthImage.memory);
+		depthImage.view = createImageView(depthImage.image, details.depthStencilFormat, vk::ImageAspectFlagBits::eDepth, 1);
+		
 		std::array<vk::ImageView, 3> attachments{ colorImage.view, depthImage.view, swapchainView };
 
 		vk::FramebufferCreateInfo framebufferInfo{};
@@ -1165,6 +1192,8 @@ void createFramebuffers() {
 		framebufferInfo.height = details.swapchainExtent.height;
 		framebufferInfo.layers = 1;
 
+		colorImages.push_back(colorImage);
+		depthImages.push_back(depthImage);
 		framebuffers.push_back(device.createFramebuffer(framebufferInfo));
 	}
 }
@@ -1280,26 +1309,47 @@ void createDescriptorSets() {
 }
 
 void createCommandBuffers() {
-	vk::CommandBufferAllocateInfo allocateInfo{};
-	allocateInfo.commandPool = commandPool;
-	allocateInfo.level = vk::CommandBufferLevel::ePrimary;
-	allocateInfo.commandBufferCount = details.imageCount;
+	threadCommandPools.reserve(details.imageCount);
+	commandBuffers.reserve(details.imageCount);
 
-	commandBuffers = device.allocateCommandBuffers(allocateInfo);
+	for (auto commandBufferIndex = 0u; commandBufferIndex < details.imageCount; commandBufferIndex++) {
+		vk::CommandPoolCreateInfo poolInfo{};
+		poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
+		poolInfo.queueFamilyIndex = queueFamilyIndex;
+
+		threadCommandPools.push_back(device.createCommandPool(poolInfo));
+
+		vk::CommandBufferAllocateInfo allocateInfo{};
+		allocateInfo.commandPool = threadCommandPools.back();
+		allocateInfo.level = vk::CommandBufferLevel::ePrimary;
+		allocateInfo.commandBufferCount = 1;
+
+		commandBuffers.push_back(device.allocateCommandBuffers(allocateInfo).front());
+	}
 }
 
-void createSyncObject() {
+void createSyncObjects() {
+	vk::SemaphoreCreateInfo semaphoreInfo{};
+
 	vk::FenceCreateInfo fenceInfo{};
 	fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
 
-	vk::SemaphoreCreateInfo semaphoreInfo{};
-
-	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
-		frameFences.push_back(device.createFence(fenceInfo));
-		orderFences.push_back(nullptr);
-		availableSemaphores.push_back(device.createSemaphore(semaphoreInfo));
-		finishedSemaphores.push_back(device.createSemaphore(semaphoreInfo));
+	submitFences.reserve(details.concurrentImageCount);
+	submitSemaphores.reserve(details.concurrentImageCount);
+	presentSemaphores.reserve(details.concurrentImageCount);
+	threadSemaphores.reserve(details.concurrentImageCount);
+	
+	swapchainSemaphores.reserve(details.imageCount);
+	
+	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++) {
+		submitFences.push_back(device.createFence(fenceInfo));
+		submitSemaphores.push_back(device.createSemaphore(semaphoreInfo));
+		presentSemaphores.push_back(device.createSemaphore(semaphoreInfo));
+		threadSemaphores.push_back(std::make_unique<std::binary_semaphore>(0));
 	}
+
+	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++)
+		swapchainSemaphores.push_back(std::make_unique<std::binary_semaphore>(1));
 }
 
 void setup() {
@@ -1314,7 +1364,7 @@ void setup() {
 	createElementBuffers();
 	createDescriptorSets();
 	createCommandBuffers();
-	createSyncObject();
+	createSyncObjects();
 }
 
 //TODO: Remove constant memory map-unmaps
@@ -1392,9 +1442,10 @@ void updateScene(uint32_t imageIndex) {
 		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
 	projection[1][1] *= -1;
 
-	auto data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, imageIndex * details.uniformStride, details.uniformStride));
+	auto uniformOffset = imageIndex * details.uniformStride;
+
 	auto transform = projection * view;
-	std::memcpy(data + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
+	std::memcpy(data + uniformOffset + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 		auto& portal = portals.at(portalIndex);
@@ -1424,10 +1475,8 @@ void updateScene(uint32_t imageIndex) {
 		portalProjection[1][1] *= -1;
 
 		auto portalTransform = portalProjection * portalView;
-		std::memcpy(data + portalIndex * details.uniformAlignment, &portalTransform, sizeof(glm::mat4));
+		std::memcpy(data + uniformOffset + portalIndex * details.uniformAlignment, &portalTransform, sizeof(glm::mat4));
 	}
-
-	device.unmapMemory(uniformBuffer.memory);
 }
 
 void updateCommandBuffers(uint32_t imageIndex) {
@@ -1481,7 +1530,7 @@ void updateCommandBuffers(uint32_t imageIndex) {
 	renderPassInfo.clearValueCount = clearValues.size();
 	renderPassInfo.pClearValues = clearValues.data();
 
-	static_cast<void>(commandBuffer.begin(beginInfo));
+	commandBuffer.begin(beginInfo);
 	commandBuffer.bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
 	commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer.buffer, &bufferOffset);
 	commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
@@ -1514,80 +1563,125 @@ void updateCommandBuffers(uint32_t imageIndex) {
 
 	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	commandBuffer.endRenderPass();
-	static_cast<void>(commandBuffer.end());
+	commandBuffer.end();
+}
+
+void renderImage(uint32_t threadIndex) {
+	auto& queue = concurrentQueues.at(threadIndex);
+	auto& submitFence = submitFences.at(threadIndex);
+	auto& submitSemaphore = submitSemaphores.at(threadIndex);
+	auto& presentSemaphore = presentSemaphores.at(threadIndex);
+	auto& executionOrder = threadSemaphores.at(threadIndex);
+	auto& nextThread = threadSemaphores.at((threadIndex + 1) % details.concurrentImageCount);
+
+	auto imageIndex = std::numeric_limits<uint32_t>::max();
+	vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+
+	vk::SubmitInfo submitInfo{};
+	submitInfo.waitSemaphoreCount = 1;
+	submitInfo.pWaitSemaphores = &presentSemaphore;
+	submitInfo.pWaitDstStageMask = &waitStage;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.signalSemaphoreCount = 1;
+	submitInfo.pSignalSemaphores = &submitSemaphore;
+
+	vk::PresentInfoKHR presentInfo{};
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores = &submitSemaphore;
+	presentInfo.swapchainCount = 1;
+	presentInfo.pSwapchains = &swapchain;
+
+	std::string locked(std::to_string(threadIndex) + " locked!");
+	std::string unlocked(std::to_string(threadIndex) + " unlocked!");
+
+	while (state.threadsActive) {
+		device.waitForFences(1, &submitFence, true, std::numeric_limits<uint64_t>::max());
+
+		if (imageIndex != std::numeric_limits<uint32_t>::max())
+			swapchainSemaphores.at(imageIndex)->release();
+
+		//executionOrder->acquire();
+
+		//acquireMutex.lock();
+		//acquireSemaphore.acquire();
+		//std::cout << locked << std::endl;
+		imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(), presentSemaphore, nullptr);
+		//acquireSemaphore.release();
+		//acquireMutex.unlock();
+		//std::cout << unlocked << std::endl;
+
+		updateCommandBuffers(imageIndex);
+
+		swapchainSemaphores.at(imageIndex)->acquire();
+		device.resetFences(1, &submitFence);
+
+		submitInfo.pCommandBuffers = &commandBuffers.at(imageIndex);
+		queue.submit(1, &submitInfo, submitFence);
+
+		presentInfo.pImageIndices = &imageIndex;
+		queue.presentKHR(presentInfo);
+
+		state.frameCount++;
+		//nextThread->release();
+	}
 }
 
 //TODO: Split present and retrieve
 void draw() {
 	state.frameCount = 0;
+	state.totalFrameCount = 0;
+	state.currentImage = 0;
 	state.checkPoint = 0.0f;
+	state.threadsActive = true;
 	state.currentTime = std::chrono::high_resolution_clock::now();
 
-	while (!glfwWindowShouldClose(window)) {
+	data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, 0, details.imageCount * details.uniformStride));
+
+	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
+		updateScene(imageIndex);
+	}
+
+	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++)
+		renderThreads.push_back(std::thread(renderImage, imageIndex));
+
+	//threadSemaphores.front()->release();
+
+	while (1) {
 		glfwPollEvents();
+		if (glfwWindowShouldClose(window))
+			break;
 
 		state.previousTime = state.currentTime;
 		state.currentTime = std::chrono::high_resolution_clock::now();
 		state.timeDelta = std::chrono::duration<float_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 		state.checkPoint += state.timeDelta;
-		state.frameCount++;
-
-		static_cast<void>(device.waitForFences(1, &frameFences[state.currentImage], true, std::numeric_limits<uint64_t>::max()));
-		auto imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(),
-			availableSemaphores.at(state.currentImage), nullptr).value;
-
-		if (orderFences.at(imageIndex))
-			static_cast<void>(device.waitForFences(1, &orderFences.at(imageIndex), true, std::numeric_limits<uint64_t>::max()));
-
-		orderFences.at(imageIndex) = frameFences.at(state.currentImage);
-
-		updateScene(state.currentImage);
-		updateCommandBuffers(state.currentImage);
-
-		std::array<vk::Semaphore, 1> waitSemaphores{ availableSemaphores[state.currentImage] };
-		std::array<vk::Semaphore, 1> signalSemaphores{ finishedSemaphores[state.currentImage] };
-		std::array<vk::PipelineStageFlags, 1> waitStages{ vk::PipelineStageFlagBits::eColorAttachmentOutput };
-
-		vk::SubmitInfo submitInfo{};
-		submitInfo.waitSemaphoreCount = waitSemaphores.size();
-		submitInfo.pWaitSemaphores = waitSemaphores.data();
-		submitInfo.pWaitDstStageMask = waitStages.data();
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &commandBuffers.at(imageIndex);
-		submitInfo.signalSemaphoreCount = signalSemaphores.size();
-		submitInfo.pSignalSemaphores = signalSemaphores.data();
-
-		vk::PresentInfoKHR presentInfo{};
-		presentInfo.waitSemaphoreCount = signalSemaphores.size();
-		presentInfo.pWaitSemaphores = signalSemaphores.data();
-		presentInfo.swapchainCount = 1;
-		presentInfo.pSwapchains = &swapchain;
-		presentInfo.pImageIndices = &imageIndex;
-		presentInfo.pResults = nullptr;
-
-		static_cast<void>(device.resetFences(1, &frameFences.at(state.currentImage)));
-		static_cast<void>(queue.submit(1, &submitInfo, frameFences.at(state.currentImage)));
-		static_cast<void>(queue.presentKHR(presentInfo));
-		state.currentImage = (state.currentImage + 1) % details.imageCount;
 
 		if (state.checkPoint > 1.0f) {
 			auto title = std::to_string(state.frameCount);
-			glfwSetWindowTitle(window, title.c_str());
-			state.checkPoint = 0.0f;
+			state.totalFrameCount += state.frameCount;
 			state.frameCount = 0;
+			state.checkPoint = 0.0f;
+			glfwSetWindowTitle(window, title.c_str());
 		}
+
+		std::this_thread::sleep_until(state.currentTime + std::chrono::milliseconds(16));
 	}
 
-	static_cast<void>(device.waitIdle());
+	state.threadsActive = false;
+	for (auto& thread : renderThreads)
+		thread.join();
+
+	device.unmapMemory(uniformBuffer.memory);
+	device.waitIdle();
 }
 
 void clear() {
-	for (auto& finishedSemaphore : finishedSemaphores)
-		device.destroySemaphore(finishedSemaphore);
-	for (auto& availableSemaphore : availableSemaphores)
-		device.destroySemaphore(availableSemaphore);
-	for (auto& frameFence : frameFences)
-		device.destroyFence(frameFence);
+	for (auto& semaphore : presentSemaphores)
+		device.destroySemaphore(semaphore);
+	for (auto& semaphore : submitSemaphores)
+		device.destroySemaphore(semaphore);
+	for (auto& fence : submitFences)
+		device.destroyFence(fence);
 	device.destroyDescriptorPool(descriptorPool);
 	device.destroyBuffer(uniformBuffer.buffer);
 	device.freeMemory(uniformBuffer.memory);
@@ -1597,12 +1691,16 @@ void clear() {
 	device.freeMemory(indexBuffer.memory);
 	for (auto& swapchainFramebuffer : framebuffers)
 		device.destroyFramebuffer(swapchainFramebuffer);
-	device.destroyImageView(colorImage.view);
-	device.destroyImage(colorImage.image);
-	device.freeMemory(colorImage.memory);
-	device.destroyImageView(depthImage.view);
-	device.destroyImage(depthImage.image);
-	device.freeMemory(depthImage.memory);
+	for (auto& colorImage : colorImages) {
+		device.destroyImageView(colorImage.view);
+		device.destroyImage(colorImage.image);
+		device.freeMemory(colorImage.memory);
+	}
+	for (auto& depthImage : depthImages) {
+		device.destroyImageView(depthImage.view);
+		device.destroyImage(depthImage.image);
+		device.freeMemory(depthImage.memory);
+	}
 	for (auto& texture : textures) {
 		device.destroyImageView(texture.view);
 		device.destroyImage(texture.image);
@@ -1626,7 +1724,9 @@ void clear() {
 	for (auto& swapchainView : swapchainViews)
 		device.destroyImageView(swapchainView);
 	device.destroySwapchainKHR(swapchain);
-	device.destroyCommandPool(commandPool);
+	for(auto& commandPool : threadCommandPools)
+		device.destroyCommandPool(commandPool);
+	device.destroyCommandPool(mainCommandPool);
 	device.destroy();
 	instance.destroySurfaceKHR(surface);
 #ifndef NDEBUG

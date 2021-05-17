@@ -7,12 +7,16 @@
 
 #include <array>
 #include <limits>
+#include <optional>
 #include <vector>
 #include <chrono>
 #include <memory>
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <mutex>
+#include <semaphore>
+#include <thread>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/intersect.hpp>
@@ -52,7 +56,9 @@ namespace svh {
 
 	struct State {
 		uint32_t currentImage;
-		uint16_t frameCount;
+		uint32_t totalFrameCount;
+		std::atomic<uint32_t> frameCount;
+		std::atomic<bool> threadsActive;
 		float_t timeDelta;
 		float_t checkPoint;
 		std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
@@ -61,6 +67,9 @@ namespace svh {
 
 	struct Details {
 		uint32_t imageCount;
+		uint32_t minImageCount;
+		uint32_t maxImageCount;
+		uint32_t concurrentImageCount;
 		uint32_t portalCount;
 		uint32_t meshCount;
 		uint32_t uniformAlignment;
