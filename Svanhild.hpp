@@ -59,8 +59,8 @@ namespace svh {
 		uint32_t totalFrameCount;
 		std::atomic<uint32_t> frameCount;
 		std::atomic<bool> threadsActive;
-		float_t timeDelta;
-		float_t checkPoint;
+		double_t timeDelta;
+		double_t checkPoint;
 		std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
 		std::chrono::time_point<std::chrono::high_resolution_clock> currentTime;
 	};

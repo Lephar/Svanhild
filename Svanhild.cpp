@@ -1369,7 +1369,7 @@ void setup() {
 
 //TODO: Remove constant memory map-unmaps
 void updateScene(uint32_t imageIndex) {
-	auto moveDelta = state.timeDelta * 12.0f, turnDelta = state.timeDelta * glm::radians(120.0f);
+	auto moveDelta = static_cast<float_t>(state.timeDelta) * 12.0f, turnDelta = static_cast<float_t>(state.timeDelta) * glm::radians(120.0f);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
 	auto& camera = controls.observer ? observerCamera : playerCamera;
 
@@ -1596,24 +1596,19 @@ void renderImage(uint32_t threadIndex) {
 
 	while (state.threadsActive) {
 		device.waitForFences(1, &submitFence, true, std::numeric_limits<uint64_t>::max());
+		device.resetFences(1, &submitFence);
 
 		if (imageIndex != std::numeric_limits<uint32_t>::max())
 			swapchainSemaphores.at(imageIndex)->release();
 
 		//executionOrder->acquire();
-
-		//acquireMutex.lock();
 		//acquireSemaphore.acquire();
-		//std::cout << locked << std::endl;
-		imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(), presentSemaphore, nullptr);
-		//acquireSemaphore.release();
-		//acquireMutex.unlock();
-		//std::cout << unlocked << std::endl;
+		acquireMutex.lock();
 
-		updateCommandBuffers(imageIndex);
+		imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(), presentSemaphore, nullptr);
 
 		swapchainSemaphores.at(imageIndex)->acquire();
-		device.resetFences(1, &submitFence);
+		//RECORD HERE
 
 		submitInfo.pCommandBuffers = &commandBuffers.at(imageIndex);
 		queue.submit(1, &submitInfo, submitFence);
@@ -1621,8 +1616,11 @@ void renderImage(uint32_t threadIndex) {
 		presentInfo.pImageIndices = &imageIndex;
 		queue.presentKHR(presentInfo);
 
-		state.frameCount++;
 		//nextThread->release();
+		//acquireSemaphore.release();
+		acquireMutex.unlock();
+		
+		state.frameCount++;
 	}
 }
 
@@ -1638,6 +1636,7 @@ void draw() {
 	data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, 0, details.imageCount * details.uniformStride));
 
 	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
+		updateCommandBuffers(imageIndex);
 		updateScene(imageIndex);
 	}
 
@@ -1645,7 +1644,7 @@ void draw() {
 		renderThreads.push_back(std::thread(renderImage, imageIndex));
 
 	//threadSemaphores.front()->release();
-
+	
 	while (1) {
 		glfwPollEvents();
 		if (glfwWindowShouldClose(window))
@@ -1653,18 +1652,19 @@ void draw() {
 
 		state.previousTime = state.currentTime;
 		state.currentTime = std::chrono::high_resolution_clock::now();
-		state.timeDelta = std::chrono::duration<float_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
+		state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 		state.checkPoint += state.timeDelta;
 
-		if (state.checkPoint > 1.0f) {
-			auto title = std::to_string(state.frameCount);
+		if (state.checkPoint > 1.0) {
 			state.totalFrameCount += state.frameCount;
+			auto title = std::to_string(state.frameCount) + " - " + std::to_string(state.totalFrameCount);
 			state.frameCount = 0;
-			state.checkPoint = 0.0f;
+			state.checkPoint = 0.0;
 			glfwSetWindowTitle(window, title.c_str());
 		}
 
-		std::this_thread::sleep_until(state.currentTime + std::chrono::milliseconds(16));
+		//std::this_thread::sleep_for(std::chrono::microseconds(10));
+		//std::this_thread::sleep_until(state.currentTime + std::chrono::microseconds(1));
 	}
 
 	state.threadsActive = false;
