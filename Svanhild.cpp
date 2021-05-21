@@ -42,14 +42,17 @@ uint8_t* data;
 std::vector<vk::Queue> concurrentQueues;
 std::vector<vk::CommandPool> threadCommandPools;
 std::vector<vk::CommandBuffer> commandBuffers;
+std::vector<svh::Status> commandBufferStatuses;
 
-std::vector<std::thread> renderThreads;
+std::vector<std::thread> recordThreads, renderThreads;
 std::vector<vk::Fence> submitFences;
 std::vector<vk::Semaphore> submitSemaphores, presentSemaphores;
 std::vector<std::unique_ptr<std::binary_semaphore>> swapchainSemaphores, threadSemaphores;
 
 std::mutex acquireMutex;
-std::binary_semaphore acquireSemaphore(1);
+std::vector<std::unique_ptr<std::mutex>> swapchainMutexes;
+std::counting_semaphore<std::numeric_limits<ptrdiff_t>::max()> recordingSemaphore(0);
+//std::binary_semaphore acquireSemaphore(1);
 
 #ifndef NDEBUG
 
@@ -256,6 +259,7 @@ svh::Details generateDetails() {
 
 	temporaryDetails.meshCount = 0;
 	temporaryDetails.portalCount = 0;
+	temporaryDetails.commandBufferPerImage = 3;
 
 	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
 	glfwGetFramebufferSize(window, reinterpret_cast<int32_t*>(&surfaceCapabilities.currentExtent.width),
@@ -1309,8 +1313,11 @@ void createDescriptorSets() {
 }
 
 void createCommandBuffers() {
+	auto commandBufferCount = details.imageCount * details.commandBufferPerImage;
+
 	threadCommandPools.reserve(details.imageCount);
-	commandBuffers.reserve(details.imageCount);
+	commandBuffers.reserve(commandBufferCount);
+	commandBufferStatuses.reserve(commandBufferCount);
 
 	for (auto commandBufferIndex = 0u; commandBufferIndex < details.imageCount; commandBufferIndex++) {
 		vk::CommandPoolCreateInfo poolInfo{};
@@ -1322,10 +1329,14 @@ void createCommandBuffers() {
 		vk::CommandBufferAllocateInfo allocateInfo{};
 		allocateInfo.commandPool = threadCommandPools.back();
 		allocateInfo.level = vk::CommandBufferLevel::ePrimary;
-		allocateInfo.commandBufferCount = 1;
+		allocateInfo.commandBufferCount = details.commandBufferPerImage;
 
-		commandBuffers.push_back(device.allocateCommandBuffers(allocateInfo).front());
+		auto imageCommandBuffers = device.allocateCommandBuffers(allocateInfo);
+		commandBuffers.insert(commandBuffers.end(), imageCommandBuffers.begin(), imageCommandBuffers.end());
 	}
+
+	for (auto statusIndex = 0u; statusIndex < commandBufferCount; statusIndex++)
+		commandBufferStatuses.push_back(svh::Status::NotRecorded);
 }
 
 void createSyncObjects() {
@@ -1338,7 +1349,8 @@ void createSyncObjects() {
 	submitSemaphores.reserve(details.concurrentImageCount);
 	presentSemaphores.reserve(details.concurrentImageCount);
 	threadSemaphores.reserve(details.concurrentImageCount);
-	
+
+	swapchainMutexes.reserve(details.imageCount);
 	swapchainSemaphores.reserve(details.imageCount);
 	
 	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++) {
@@ -1348,8 +1360,10 @@ void createSyncObjects() {
 		threadSemaphores.push_back(std::make_unique<std::binary_semaphore>(0));
 	}
 
-	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++)
+	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
+		swapchainMutexes.push_back(std::make_unique<std::mutex>());
 		swapchainSemaphores.push_back(std::make_unique<std::binary_semaphore>(1));
+	}
 }
 
 void setup() {
@@ -1479,9 +1493,10 @@ void updateScene(uint32_t imageIndex) {
 	}
 }
 
-void updateCommandBuffers(uint32_t imageIndex) {
-	auto& commandBuffer = commandBuffers.at(imageIndex);
+void updateCommandBuffer(uint32_t commandBufferIndex) {
+	auto imageIndex = commandBufferIndex / details.commandBufferPerImage;
 	auto uniformOffset = imageIndex * details.uniformStride + details.portalCount * details.uniformAlignment;
+	auto& commandBuffer = commandBuffers.at(commandBufferIndex);
 
 	vk::DeviceSize bufferOffset = 0;
 
@@ -1566,15 +1581,95 @@ void updateCommandBuffers(uint32_t imageIndex) {
 	commandBuffer.end();
 }
 
+uint32_t getCommandBufferIndex(uint32_t imageIndex) {
+	auto offset = imageIndex * details.commandBufferPerImage;
+	auto &swapchainMutex = swapchainMutexes.at(imageIndex);
+
+	swapchainMutex->lock();
+
+	for (auto index = offset; index < offset + details.commandBufferPerImage; index++) {
+		auto& status = commandBufferStatuses.at(index);
+
+		if (status == svh::Status::Ready || status == svh::Status::Used) {
+			status = svh::Status::InUse;
+			swapchainMutex->unlock();
+			return index;
+		}
+	}
+
+	swapchainMutex->unlock();
+	return std::numeric_limits<uint32_t>::max();
+}
+
+void recordCommands(uint32_t imageIndex) {
+	auto offset = imageIndex * details.commandBufferPerImage;
+	auto& swapchainMutex = swapchainMutexes.at(imageIndex);
+
+	updateCommandBuffer(offset);
+	commandBufferStatuses.at(offset) = svh::Status::Ready;
+	auto previousIndex = std::numeric_limits<uint32_t>::max(), currentIndex = offset;
+
+	if (++state.recordingCount == details.imageCount)
+		recordingSemaphore.release(details.concurrentImageCount);
+
+	while (state.threadsActive) {
+		previousIndex = currentIndex;
+		currentIndex = std::numeric_limits<uint32_t>::max();
+		
+		auto notRecorded = std::numeric_limits<uint32_t>::max();
+		auto invalidated = std::numeric_limits<uint32_t>::max();
+		auto used = std::numeric_limits<uint32_t>::max();
+
+		swapchainMutex->lock();
+		
+		for (auto index = offset; index < offset + details.commandBufferPerImage; index++) {
+			if (index == previousIndex)
+				continue;
+
+			auto& status = commandBufferStatuses.at(index);
+
+			if (status == svh::Status::NotRecorded)
+				notRecorded = index;
+			if (status == svh::Status::Invalidated)
+				invalidated = index;
+			if (status == svh::Status::Used)
+				used = index;
+		}
+
+		if (notRecorded != std::numeric_limits<uint32_t>::max())
+			currentIndex = notRecorded;
+		else if (invalidated != std::numeric_limits<uint32_t>::max())
+			currentIndex = invalidated;
+		else if (used != std::numeric_limits<uint32_t>::max())
+			currentIndex = used;
+
+		commandBufferStatuses.at(currentIndex) = svh::Status::Recording;
+		swapchainMutex->unlock();
+
+		updateCommandBuffer(currentIndex);
+
+		swapchainMutex->lock();
+
+		for(auto index = offset; index < offset + details.commandBufferPerImage; index++)
+			if(commandBufferStatuses.at(index) == svh::Status::Ready || commandBufferStatuses.at(index) == svh::Status::Used)
+				commandBufferStatuses.at(index) = svh::Status::Invalidated;
+
+		commandBufferStatuses.at(currentIndex) = svh::Status::Ready;
+
+		swapchainMutex->unlock();
+	}
+}
+
 void renderImage(uint32_t threadIndex) {
 	auto& queue = concurrentQueues.at(threadIndex);
 	auto& submitFence = submitFences.at(threadIndex);
 	auto& submitSemaphore = submitSemaphores.at(threadIndex);
 	auto& presentSemaphore = presentSemaphores.at(threadIndex);
-	auto& executionOrder = threadSemaphores.at(threadIndex);
-	auto& nextThread = threadSemaphores.at((threadIndex + 1) % details.concurrentImageCount);
+	//auto& executionOrder = threadSemaphores.at(threadIndex);
+	//auto& nextThread = threadSemaphores.at((threadIndex + 1) % details.concurrentImageCount);
 
 	auto imageIndex = std::numeric_limits<uint32_t>::max();
+	auto commandBufferIndex = std::numeric_limits<uint32_t>::max();
 	vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
 	vk::SubmitInfo submitInfo{};
@@ -1591,35 +1686,38 @@ void renderImage(uint32_t threadIndex) {
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &swapchain;
 
-	std::string locked(std::to_string(threadIndex) + " locked!");
-	std::string unlocked(std::to_string(threadIndex) + " unlocked!");
+	recordingSemaphore.acquire();
 
 	while (state.threadsActive) {
 		device.waitForFences(1, &submitFence, true, std::numeric_limits<uint64_t>::max());
 		device.resetFences(1, &submitFence);
 
-		if (imageIndex != std::numeric_limits<uint32_t>::max())
+		if (imageIndex != std::numeric_limits<uint32_t>::max()) {
+			swapchainMutexes.at(imageIndex)->lock();
+			commandBufferStatuses.at(commandBufferIndex) = svh::Status::Used;
+			swapchainMutexes.at(imageIndex)->unlock();
 			swapchainSemaphores.at(imageIndex)->release();
+		}
 
-		//executionOrder->acquire();
-		//acquireSemaphore.acquire();
 		acquireMutex.lock();
+		//executionOrder->acquire();
 
 		imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(), presentSemaphore, nullptr);
 
 		swapchainSemaphores.at(imageIndex)->acquire();
-		//RECORD HERE
 
-		submitInfo.pCommandBuffers = &commandBuffers.at(imageIndex);
+		commandBufferIndex = getCommandBufferIndex(imageIndex);
+		//std::cout << imageIndex << " " << commandBufferIndex << std::endl;
+
+		submitInfo.pCommandBuffers = &commandBuffers.at(commandBufferIndex);
 		queue.submit(1, &submitInfo, submitFence);
 
 		presentInfo.pImageIndices = &imageIndex;
 		queue.presentKHR(presentInfo);
 
-		//nextThread->release();
-		//acquireSemaphore.release();
 		acquireMutex.unlock();
-		
+		//nextThread->release();
+
 		state.frameCount++;
 	}
 }
@@ -1630,14 +1728,15 @@ void draw() {
 	state.totalFrameCount = 0;
 	state.currentImage = 0;
 	state.checkPoint = 0.0f;
+	state.recordingCount = 0;
 	state.threadsActive = true;
 	state.currentTime = std::chrono::high_resolution_clock::now();
 
 	data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, 0, details.imageCount * details.uniformStride));
 
 	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
-		updateCommandBuffers(imageIndex);
 		updateScene(imageIndex);
+		recordThreads.push_back(std::thread(recordCommands, imageIndex));
 	}
 
 	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++)
@@ -1664,11 +1763,13 @@ void draw() {
 		}
 
 		//std::this_thread::sleep_for(std::chrono::microseconds(10));
-		//std::this_thread::sleep_until(state.currentTime + std::chrono::microseconds(1));
+		//std::this_thread::sleep_until(state.currentTime + std::chrono::milliseconds(1));
 	}
 
 	state.threadsActive = false;
 	for (auto& thread : renderThreads)
+		thread.join();
+	for (auto& thread : recordThreads)
 		thread.join();
 
 	device.unmapMemory(uniformBuffer.memory);

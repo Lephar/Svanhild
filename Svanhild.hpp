@@ -37,6 +37,15 @@ namespace svh {
 		Player,
 		Observer
 	};
+	
+	enum class Status {
+		NotRecorded,
+		Recording,
+		Invalidated,
+		Ready,
+		Used,
+		InUse
+	};
 
 	struct Controls {
 		uint8_t observer;
@@ -54,17 +63,6 @@ namespace svh {
 		uint8_t keyF;
 	};
 
-	struct State {
-		uint32_t currentImage;
-		uint32_t totalFrameCount;
-		std::atomic<uint32_t> frameCount;
-		std::atomic<bool> threadsActive;
-		double_t timeDelta;
-		double_t checkPoint;
-		std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
-		std::chrono::time_point<std::chrono::high_resolution_clock> currentTime;
-	};
-
 	struct Details {
 		uint32_t imageCount;
 		uint32_t minImageCount;
@@ -75,6 +73,7 @@ namespace svh {
 		uint32_t uniformAlignment;
 		uint32_t uniformStride;
 		uint32_t uniformSize;
+		uint32_t commandBufferPerImage;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
@@ -84,6 +83,18 @@ namespace svh {
 		vk::SampleCountFlagBits sampleCount;
 		uint32_t mipLevels;
 		float_t maxAnisotropy;
+	};
+
+	struct State {
+		uint32_t currentImage;
+		uint32_t totalFrameCount;
+		std::atomic<uint32_t> frameCount;
+		std::atomic<uint32_t> recordingCount;
+		std::atomic<bool> threadsActive;
+		double_t timeDelta;
+		double_t checkPoint;
+		std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
+		std::chrono::time_point<std::chrono::high_resolution_clock> currentTime;
 	};
 
 	struct Vertex {
