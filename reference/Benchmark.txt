@@ -2,4 +2,4 @@ Single-thread Prebuilt Command Buffers -> 1700 - 2800 FPS
 Single-thread Dynamic Command Buffers -> 800 - 1000 FPS
 Multi-thread Prebuilt Command Buffers -> 1400 - 1600 FPS
 Multi-thread Dynamic Command Buffers -> 900 - 1100 FPS
-Multi-thread Concurrent Dynamic Command Buffers -> 1200 --> 1600 FPS
+Multi-thread Concurrent Dynamic Command Buffers -> 1400 - 1600 FPS

@@ -1583,21 +1583,21 @@ void updateCommandBuffer(uint32_t commandBufferIndex) {
 
 uint32_t getCommandBufferIndex(uint32_t imageIndex) {
 	auto offset = imageIndex * details.commandBufferPerImage;
-	auto &swapchainMutex = swapchainMutexes.at(imageIndex);
+	auto &commandBufferMutex = swapchainMutexes.at(imageIndex);
 
-	swapchainMutex->lock();
+	commandBufferMutex->lock();
 
 	for (auto index = offset; index < offset + details.commandBufferPerImage; index++) {
 		auto& status = commandBufferStatuses.at(index);
 
 		if (status == svh::Status::Ready || status == svh::Status::Used) {
 			status = svh::Status::InUse;
-			swapchainMutex->unlock();
+			commandBufferMutex->unlock();
 			return index;
 		}
 	}
 
-	swapchainMutex->unlock();
+	commandBufferMutex->unlock();
 	return std::numeric_limits<uint32_t>::max();
 }
 
