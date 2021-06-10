@@ -1560,11 +1560,16 @@ void updateCommandBuffer(uint32_t commandBufferIndex) {
 	commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
-	for (auto& mesh : meshes) {
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
-		commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+	for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformOffset);
+		
+		for (auto& mesh : meshes)
+			if(mesh.textureIndex == textureIndex)
+				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 	}
 
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformOffset);
+	
 	for (auto& portal : portals) {
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
 		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(portal.mesh.textureIndex).descriptor, 1, &uniformOffset);
@@ -1579,9 +1584,12 @@ void updateCommandBuffer(uint32_t commandBufferIndex) {
 
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
-		for (auto& mesh : meshes) {
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(mesh.textureIndex).descriptor, 1, &uniformOffset);
-			commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+		for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformOffset);
+			
+			for (auto& mesh : meshes)
+				if (mesh.textureIndex == textureIndex)
+					commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
 	}
 
