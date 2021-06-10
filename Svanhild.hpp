@@ -1,11 +1,18 @@
 #pragma once
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+
+#define TINYGLTF_USE_CPP14
+#define TINYGLTF_NO_EXTERNAL_IMAGE
 #define TINYGLTF_IMPLEMENTATION
+
+#define STBI_ONLY_JPEG
+#define STBI_NO_FAILURE_STRINGS
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include <array>
+#include <string>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -34,8 +41,7 @@ namespace svh {
 	enum class Type {
 		Mesh,
 		Portal,
-		Player,
-		Observer
+		Camera
 	};
 	
 	enum class Status {
@@ -68,6 +74,7 @@ namespace svh {
 		uint32_t minImageCount;
 		uint32_t maxImageCount;
 		uint32_t concurrentImageCount;
+		uint32_t queueCount;
 		uint32_t portalCount;
 		uint32_t meshCount;
 		uint32_t uniformAlignment;
@@ -126,10 +133,11 @@ namespace svh {
 		uint32_t indexLength;
 		uint32_t vertexOffset;
 		uint32_t vertexLength;
+
 		uint32_t textureIndex;
+		std::string textureName;
 
 		glm::vec3 origin;
-		glm::vec3 normal;
 		glm::vec3 minBorders;
 		glm::vec3 maxBorders;
 
@@ -142,6 +150,7 @@ namespace svh {
 		uint8_t pair;
 		uint8_t targetRoom;
 
+		glm::vec3 direction;
 		glm::mat4 targetTransform;
 		glm::mat4 cameraTransform;
 

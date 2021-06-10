@@ -3,3 +3,5 @@ Single-thread Dynamic Command Buffers -> 800 - 1000 FPS
 Multi-thread Prebuilt Command Buffers -> 1400 - 1600 FPS
 Multi-thread Dynamic Command Buffers -> 900 - 1100 FPS
 Multi-thread Concurrent Dynamic Command Buffers -> 1400 - 1600 FPS
+
+New material system, many descriptor switch -> Stable 390 FPS
