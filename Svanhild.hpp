@@ -21,9 +21,10 @@
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <thread>
 #include <mutex>
 #include <semaphore>
-#include <thread>
+#include <shared_mutex>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/intersect.hpp>
@@ -54,19 +55,19 @@ namespace svh {
 	};
 
 	struct Controls {
-		uint8_t observer;
+		bool observer;
+		bool keyW;
+		bool keyA;
+		bool keyS;
+		bool keyD;
+		bool keyQ;
+		bool keyE;
+		bool keyR;
+		bool keyF;
 		double_t mouseX;
 		double_t mouseY;
 		float_t deltaX;
 		float_t deltaY;
-		uint8_t keyW;
-		uint8_t keyA;
-		uint8_t keyS;
-		uint8_t keyD;
-		uint8_t keyQ;
-		uint8_t keyE;
-		uint8_t keyR;
-		uint8_t keyF;
 	};
 
 	struct Details {
@@ -74,13 +75,14 @@ namespace svh {
 		uint32_t minImageCount;
 		uint32_t maxImageCount;
 		uint32_t concurrentImageCount;
+		uint32_t commandBufferPerImage;
 		uint32_t queueCount;
 		uint32_t portalCount;
 		uint32_t meshCount;
 		uint32_t uniformAlignment;
-		uint32_t uniformStride;
+		uint32_t uniformQueueStride;
+		uint32_t uniformFrameStride;
 		uint32_t uniformSize;
-		uint32_t commandBufferPerImage;
 		vk::Extent2D swapchainExtent;
 		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
 		vk::Format depthStencilFormat;
@@ -111,9 +113,15 @@ namespace svh {
 	};
 
 	struct Camera {
+		uint32_t room;
+
 		glm::vec3 position;
 		glm::vec3 direction;
 		glm::vec3 up;
+
+		glm::vec3 previous;
+
+		glm::mat4 transform;
 	};
 
 	struct Buffer {
@@ -147,12 +155,14 @@ namespace svh {
 
 	struct Portal {
 		Mesh mesh;
-		uint8_t pair;
+		uint8_t pairIndex;
 		uint8_t targetRoom;
 
 		glm::vec3 direction;
 		glm::mat4 targetTransform;
 		glm::mat4 cameraTransform;
+
+		glm::mat4 transform;
 
 		vk::Pipeline stencilPipeline;
 		vk::Pipeline renderPipeline;

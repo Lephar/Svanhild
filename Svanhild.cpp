@@ -7,9 +7,7 @@ shaderc::CompileOptions shaderOptions;
 
 svh::Controls controls;
 svh::State state;
-svh::Camera playerCamera, observerCamera;
-glm::vec3 previousPosition;
-uint32_t currentRoom;
+svh::Camera player, observer;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
 std::vector<std::string> imageNames;
@@ -39,7 +37,7 @@ std::vector<vk::Framebuffer> framebuffers;
 svh::Buffer indexBuffer, vertexBuffer, uniformBuffer;
 vk::DescriptorPool descriptorPool;
 
-uint8_t* data;
+uint8_t* deviceMemory;
 
 std::vector<vk::Queue> concurrentQueues;
 std::vector<vk::CommandPool> threadCommandPools;
@@ -50,11 +48,10 @@ std::vector<std::thread> recordThreads, renderThreads;
 std::vector<vk::Fence> submitFences;
 std::vector<vk::Semaphore> submitSemaphores, presentSemaphores;
 std::vector<std::unique_ptr<std::binary_semaphore>> swapchainSemaphores, threadSemaphores;
-
 std::mutex acquireMutex;
 std::vector<std::unique_ptr<std::mutex>> swapchainMutexes;
 std::counting_semaphore<std::numeric_limits<ptrdiff_t>::max()> recordingSemaphore(0);
-//std::binary_semaphore acquireSemaphore(1);
+std::shared_mutex uniformMutex;
 
 #ifndef NDEBUG
 
@@ -77,8 +74,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 void mouseCallback(GLFWwindow* handle, double x, double y) {
 	static_cast<void>(handle);
 
-	controls.deltaX = controls.mouseX - x;
-	controls.deltaY = y - controls.mouseY;
+	controls.deltaX += controls.mouseX - x;
+	controls.deltaY += y - controls.mouseY;
 	controls.mouseX = x;
 	controls.mouseY = y;
 }
@@ -89,39 +86,39 @@ void keyboardCallback(GLFWwindow* handle, int key, int scancode, int action, int
 
 	if (action == GLFW_RELEASE) {
 		if (key == GLFW_KEY_W)
-			controls.keyW = 0;
+			controls.keyW = false;
 		else if (key == GLFW_KEY_S)
-			controls.keyS = 0;
+			controls.keyS = false;
 		else if (key == GLFW_KEY_A)
-			controls.keyA = 0;
+			controls.keyA = false;
 		else if (key == GLFW_KEY_D)
-			controls.keyD = 0;
+			controls.keyD = false;
 		else if (key == GLFW_KEY_Q)
-			controls.keyQ = 0;
+			controls.keyQ = false;
 		else if (key == GLFW_KEY_E)
-			controls.keyE = 0;
+			controls.keyE = false;
 		else if (key == GLFW_KEY_R)
-			controls.keyR = 0;
+			controls.keyR = false;
 		else if (key == GLFW_KEY_F)
-			controls.keyF = 0;
+			controls.keyF = false;
 	}
 	else if (action == GLFW_PRESS) {
 		if (key == GLFW_KEY_W)
-			controls.keyW = 1;
+			controls.keyW = true;
 		else if (key == GLFW_KEY_S)
-			controls.keyS = 1;
+			controls.keyS = true;
 		else if (key == GLFW_KEY_A)
-			controls.keyA = 1;
+			controls.keyA = true;
 		else if (key == GLFW_KEY_D)
-			controls.keyD = 1;
+			controls.keyD = true;
 		else if (key == GLFW_KEY_Q)
-			controls.keyQ = 1;
+			controls.keyQ = true;
 		else if (key == GLFW_KEY_E)
-			controls.keyE = 1;
+			controls.keyE = true;
 		else if (key == GLFW_KEY_R)
-			controls.keyR = 1;
+			controls.keyR = true;
 		else if (key == GLFW_KEY_F)
-			controls.keyF = 1;
+			controls.keyF = true;
 		else if (key == GLFW_KEY_ESCAPE)
 			glfwSetWindowShouldClose(handle, 1);
 		else if (key == GLFW_KEY_TAB) {
@@ -142,17 +139,17 @@ void resizeEvent(GLFWwindow* handle, int width, int height) {
 }
 
 void initializeControls() {
-	controls.observer = 1u;
+	controls.observer = false;
+	controls.keyW = false;
+	controls.keyA = false;
+	controls.keyS = false;
+	controls.keyD = false;
+	controls.keyQ = false;
+	controls.keyE = false;
+	controls.keyR = false;
+	controls.keyF = false;
 	controls.deltaX = 0.0f;
 	controls.deltaY = 0.0f;
-	controls.keyW = 0u;
-	controls.keyA = 0u;
-	controls.keyS = 0u;
-	controls.keyD = 0u;
-	controls.keyQ = 0u;
-	controls.keyE = 0u;
-	controls.keyR = 0u;
-	controls.keyF = 0u;
 }
 
 void initializeCore() {
@@ -171,7 +168,7 @@ void initializeCore() {
 	glfwSetKeyCallback(window, keyboardCallback);
 	glfwSetCursorPosCallback(window, mouseCallback);
 	glfwSetFramebufferSizeCallback(window, resizeEvent);
-	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	glfwGetCursorPos(window, &controls.mouseX, &controls.mouseY);
 
 	auto extensionCount = 0u;
@@ -266,6 +263,7 @@ svh::Details generateDetails() {
 	auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
 	glfwGetFramebufferSize(window, reinterpret_cast<int32_t*>(&surfaceCapabilities.currentExtent.width),
 		reinterpret_cast<int32_t*>(&surfaceCapabilities.currentExtent.height));
+
 	surfaceCapabilities.currentExtent.width = std::max(surfaceCapabilities.minImageExtent.width,
 		std::min(surfaceCapabilities.maxImageExtent.width, surfaceCapabilities.currentExtent.width));
 	surfaceCapabilities.currentExtent.height = std::max(surfaceCapabilities.minImageExtent.height,
@@ -313,7 +311,9 @@ svh::Details generateDetails() {
 
 	auto deviceProperties = physicalDevice.getProperties();
 	temporaryDetails.maxAnisotropy = deviceProperties.limits.maxSamplerAnisotropy;
-	temporaryDetails.uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
+
+	auto uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
+	temporaryDetails.uniformAlignment = ((sizeof(glm::mat4) - 1) / uniformAlignment + 1) * uniformAlignment;
 
 	return temporaryDetails;
 }
@@ -567,10 +567,12 @@ glm::mat4 getNodeTransformation(const tinygltf::Node& node) {
 	return getNodeTranslation(node) * getNodeRotation(node) * getNodeScale(node);
 }
 
-void createCameraFromMatrix(const glm::mat4& transformation, svh::Camera& camera) {
+void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation, uint32_t room = 0) {
+	camera.room = room;
 	camera.position = transformation * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
 	camera.direction = transformation * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
 	camera.up = transformation * glm::vec4{ 0.0f, 0.0f, 1.0f, 0.0f };
+	camera.previous = camera.position;
 }
 
 //TODO: Use continuous memory for images
@@ -713,11 +715,8 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 #endif
 
 	if (type == svh::Type::Camera) {
-		createCameraFromMatrix(getNodeTransformation(model.nodes.front()), playerCamera);
-		createCameraFromMatrix(getNodeTransformation(model.nodes.back()), observerCamera);
-
-		previousPosition = playerCamera.position;
-		currentRoom = sourceRoom;
+		createCameraFromMatrix(player, getNodeTransformation(model.nodes.front()), sourceRoom);
+		createCameraFromMatrix(observer, getNodeTransformation(model.nodes.back()));
 	}
 
 	else {
@@ -1246,8 +1245,10 @@ void createElementBuffers() {
 	device.destroyBuffer(stagingBuffer.buffer);
 	device.freeMemory(stagingBuffer.memory);
 
-	details.uniformStride = (details.portalCount + 1) * details.uniformAlignment;
-	details.uniformSize = details.imageCount * details.uniformStride;
+	details.uniformQueueStride = (details.portalCount + 1) * details.uniformAlignment;
+	details.uniformFrameStride = details.commandBufferPerImage * details.uniformQueueStride;
+	details.uniformSize = details.imageCount * details.uniformFrameStride;
+
 	createBuffer(details.uniformSize, vk::BufferUsageFlagBits::eUniformBuffer,
 		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
 		uniformBuffer.buffer, uniformBuffer.memory);
@@ -1289,7 +1290,7 @@ void createDescriptorSets() {
 		vk::DescriptorBufferInfo uniformInfo{};
 		uniformInfo.buffer = uniformBuffer.buffer;
 		uniformInfo.offset = 0;
-		uniformInfo.range = details.uniformAlignment;
+		uniformInfo.range = details.uniformFrameStride;
 
 		vk::DescriptorImageInfo samplerInfo{};
 		samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
@@ -1391,121 +1392,22 @@ void setup() {
 }
 
 //TODO: Remove constant memory map-unmaps
-void updateScene(uint32_t imageIndex) {
-	auto moveDelta = static_cast<float_t>(state.timeDelta) * 12.0f, turnDelta = static_cast<float_t>(state.timeDelta) * glm::radians(120.0f);
-	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
-	auto& camera = controls.observer ? observerCamera : playerCamera;
+void updateUniformBuffer(uint32_t imageIndex, uint32_t queueIndex) {
+	auto uniformOffset = imageIndex * details.uniformFrameStride + queueIndex * details.uniformQueueStride;
 
-	if (vectorCount > 0)
-		moveDelta /= std::sqrt(vectorCount);
+	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
 
-	if (controls.observer) {
-		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
+	auto& camera = controls.observer ? observer : player;
+	std::memcpy(deviceMemory + uniformOffset + details.portalCount * details.uniformAlignment, &camera.transform, sizeof(glm::mat4));
 
-		if (controls.keyW || controls.keyS)
-			camera.position += (controls.keyW - controls.keyS) * moveDelta * glm::normalize(camera.direction + camera.up);
-		if (controls.keyA || controls.keyD)
-			camera.position += (controls.keyA - controls.keyD) * moveDelta * left;
-		if (controls.keyR || controls.keyF)
-			camera.position += (controls.keyR - controls.keyF) * moveDelta * camera.direction;
-		if (controls.keyQ || controls.keyE) {
-			auto rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{ 0.0f, 0.0f, 1.0f });
-
-			auto direction = glm::normalize(glm::vec2{ camera.direction });
-			camera.position += camera.position.z * glm::vec3{ direction, 0.0f };
-			camera.direction = rotation * glm::vec4{ camera.direction, 0.0f };
-
-			direction = glm::normalize(glm::vec2{ camera.direction });
-			camera.position -= camera.position.z * glm::vec3{ direction, 0.0f };
-			camera.up = rotation * glm::vec4{ camera.up, 0.0f };
-		}
-	}
-	else {
-		previousPosition = camera.position;
-
-		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
-
-		camera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
-														  glm::rotate(turnDelta * controls.deltaX, camera.up) *
-														  glm::vec4{camera.direction, 0.0f} });
-
-		left = glm::normalize(glm::cross(camera.up, camera.direction));
-
-		camera.position += moveDelta * (controls.keyW - controls.keyS) * camera.direction +
-			moveDelta * (controls.keyA - controls.keyD) * left;
-
-		controls.deltaX = 0.0f;
-		controls.deltaY = 0.0f;
-
-		auto coefficient = 0.0f, distance = glm::length(camera.position - previousPosition);
-		auto direction = glm::normalize(camera.position - previousPosition);
-
-		for (auto &portal : portals) {
-			if (svh::epsilon < distance && glm::intersectRayPlane(previousPosition, direction, portal.mesh.origin, portal.direction, coefficient)) {
-				auto point = previousPosition + coefficient * direction;
-
-				if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&
-					point.x <= portal.mesh.maxBorders.x && point.y <= portal.mesh.maxBorders.y && point.z <= portal.mesh.maxBorders.z &&
-					0 <= coefficient && distance >= coefficient) {
-
-					camera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
-					camera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
-					camera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
-
-					previousPosition = camera.position;
-
-					break;
-				}
-			}
-		}
-	}
-
-	auto view = glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
-	auto projection = glm::perspective(glm::radians(45.0f),
-		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
-	projection[1][1] *= -1;
-
-	auto uniformOffset = imageIndex * details.uniformStride;
-
-	auto transform = projection * view;
-	std::memcpy(data + uniformOffset + details.portalCount * details.uniformAlignment, &transform, sizeof(glm::mat4));
-
-	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
-		auto& portal = portals.at(portalIndex);
-
-		svh::Camera portalCamera = camera;
-		portalCamera.position = portal.cameraTransform * glm::vec4{ portalCamera.position, 1.0f };
-
-		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
-		auto portalProjection = glm::perspective(glm::radians(45.0f),
-			static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
-		/*
-		auto plane = glm::vec4{ portal.normal, glm::dot(-portal.normal, portal.origin) };
-
-		glm::vec4 quaternion{};
-		quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
-		quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
-		quaternion.z = -1.0f;
-		quaternion.w = portalProjection[2][2] / portalProjection[3][2];
-
-		auto clip = plane * (1.0f / glm::dot(plane, quaternion));
-
-		portalProjection[0][2] = clip.x;
-		portalProjection[1][2] = clip.y;
-		portalProjection[2][2] = clip.z;
-		portalProjection[3][2] = clip.w;
-		*/
-		portalProjection[1][1] *= -1;
-
-		auto portalTransform = portalProjection * portalView;
-		std::memcpy(data + uniformOffset + portalIndex * details.uniformAlignment, &portalTransform, sizeof(glm::mat4));
-	}
+	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++)
+		std::memcpy(deviceMemory + uniformOffset + portalIndex * details.uniformAlignment, &portals.at(portalIndex).transform, sizeof(glm::mat4));
 }
 
-void updateCommandBuffer(uint32_t commandBufferIndex) {
-	auto imageIndex = commandBufferIndex / details.commandBufferPerImage;
-	auto uniformOffset = imageIndex * details.uniformStride + details.portalCount * details.uniformAlignment;
-	auto& commandBuffer = commandBuffers.at(commandBufferIndex);
+void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
+	auto& commandBuffer = commandBuffers.at(imageIndex * details.commandBufferPerImage + queueIndex);
+	//auto uniformOffset = queueIndex * details.uniformQueueStride;
+	auto uniformOffset = queueIndex * details.uniformQueueStride;
 
 	vk::DeviceSize bufferOffset = 0;
 
@@ -1553,45 +1455,49 @@ void updateCommandBuffer(uint32_t commandBufferIndex) {
 	renderPassInfo.renderArea = area;
 	renderPassInfo.clearValueCount = clearValues.size();
 	renderPassInfo.pClearValues = clearValues.data();
-
+	
 	commandBuffer.begin(beginInfo);
 	commandBuffer.bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
 	commandBuffer.bindVertexBuffers(0, 1, &vertexBuffer.buffer, &bufferOffset);
 	commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
+	auto uniformLocation = uniformOffset + details.portalCount * details.uniformAlignment;
+	//auto uniformLocation = details.portalCount * details.uniformAlignment;
+
 	for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformOffset);
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
 		
 		for (auto& mesh : meshes)
 			if(mesh.textureIndex == textureIndex)
 				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 	}
 
-	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformOffset);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
 	
 	for (auto& portal : portals) {
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(portal.mesh.textureIndex).descriptor, 1, &uniformOffset);
 		commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
 	}
 
 	commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
 
-	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
+	/*for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 		auto& portal = portals.at(portalIndex);
-		uniformOffset = imageIndex * details.uniformStride + portalIndex * details.uniformAlignment;
+		
+		uniformLocation = uniformOffset + portalIndex * details.uniformAlignment;
+		//uniformLocation = portalIndex * details.uniformAlignment;
 
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
 		for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformOffset);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
 			
 			for (auto& mesh : meshes)
 				if (mesh.textureIndex == textureIndex)
 					commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
-	}
+	}*/
 
 	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	commandBuffer.endRenderPass();
@@ -1619,12 +1525,13 @@ uint32_t getCommandBufferIndex(uint32_t imageIndex) {
 }
 
 void recordCommands(uint32_t imageIndex) {
-	auto offset = imageIndex * details.commandBufferPerImage;
+	auto commandBufferOffset = imageIndex * details.commandBufferPerImage;
 	auto& swapchainMutex = swapchainMutexes.at(imageIndex);
 
-	updateCommandBuffer(offset);
-	commandBufferStatuses.at(offset) = svh::Status::Ready;
-	auto previousIndex = std::numeric_limits<uint32_t>::max(), currentIndex = offset;
+	updateCommandBuffer(imageIndex, 0);
+
+	commandBufferStatuses.at(commandBufferOffset) = svh::Status::Ready;
+	auto previousIndex = std::numeric_limits<uint32_t>::max(), currentIndex = commandBufferOffset;
 
 	if (++state.recordingCount == details.imageCount)
 		recordingSemaphore.release(details.concurrentImageCount);
@@ -1639,7 +1546,7 @@ void recordCommands(uint32_t imageIndex) {
 
 		swapchainMutex->lock();
 		
-		for (auto index = offset; index < offset + details.commandBufferPerImage; index++) {
+		for (auto index = commandBufferOffset; index < commandBufferOffset + details.commandBufferPerImage; index++) {
 			if (index == previousIndex)
 				continue;
 
@@ -1663,11 +1570,13 @@ void recordCommands(uint32_t imageIndex) {
 		commandBufferStatuses.at(currentIndex) = svh::Status::Recording;
 		swapchainMutex->unlock();
 
-		updateCommandBuffer(currentIndex);
+		auto queueIndex = currentIndex - commandBufferOffset;
+
+		updateCommandBuffer(imageIndex, queueIndex);
 
 		swapchainMutex->lock();
 
-		for(auto index = offset; index < offset + details.commandBufferPerImage; index++)
+		for(auto index = commandBufferOffset; index < commandBufferOffset + details.commandBufferPerImage; index++)
 			if(commandBufferStatuses.at(index) == svh::Status::Ready || commandBufferStatuses.at(index) == svh::Status::Used)
 				commandBufferStatuses.at(index) = svh::Status::Invalidated;
 
@@ -1682,8 +1591,8 @@ void renderImage(uint32_t threadIndex) {
 	auto& submitFence = submitFences.at(threadIndex);
 	auto& submitSemaphore = submitSemaphores.at(threadIndex);
 	auto& presentSemaphore = presentSemaphores.at(threadIndex);
-	//auto& executionOrder = threadSemaphores.at(threadIndex);
-	//auto& nextThread = threadSemaphores.at((threadIndex + 1) % details.concurrentImageCount);
+	auto& executionOrder = threadSemaphores.at(threadIndex);
+	auto& nextThread = threadSemaphores.at((threadIndex + 1) % details.concurrentImageCount);
 
 	auto imageIndex = std::numeric_limits<uint32_t>::max();
 	auto commandBufferIndex = std::numeric_limits<uint32_t>::max();
@@ -1716,15 +1625,16 @@ void renderImage(uint32_t threadIndex) {
 			swapchainSemaphores.at(imageIndex)->release();
 		}
 
-		acquireMutex.lock();
-		//executionOrder->acquire();
+		//acquireMutex.lock();
+		executionOrder->acquire();
 
 		imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(), presentSemaphore, nullptr);
 
 		swapchainSemaphores.at(imageIndex)->acquire();
 
 		commandBufferIndex = getCommandBufferIndex(imageIndex);
-		//std::cout << imageIndex << " " << commandBufferIndex << std::endl;
+		auto queueIndex = commandBufferIndex - imageIndex * details.commandBufferPerImage;
+		updateUniformBuffer(imageIndex, queueIndex);
 
 		submitInfo.pCommandBuffers = &commandBuffers.at(commandBufferIndex);
 		queue.submit(1, &submitInfo, submitFence);
@@ -1732,10 +1642,129 @@ void renderImage(uint32_t threadIndex) {
 		presentInfo.pImageIndices = &imageIndex;
 		queue.presentKHR(presentInfo);
 
-		acquireMutex.unlock();
-		//nextThread->release();
+		//acquireMutex.unlock();
+		nextThread->release();
 
 		state.frameCount++;
+	}
+}
+
+void gameTick() {
+	state.previousTime = state.currentTime;
+	state.currentTime = std::chrono::high_resolution_clock::now();
+	state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
+	state.checkPoint += state.timeDelta;
+
+	auto moveDelta = static_cast<float_t>(state.timeDelta) * 12.0f, turnDelta = static_cast<float_t>(state.timeDelta) * glm::radians(360.0f);
+	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
+
+	if (vectorCount > 0)
+		moveDelta /= std::sqrt(vectorCount);
+
+	auto camera = controls.observer ? observer : player;
+
+	if (controls.observer) {
+		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
+
+		if (controls.keyW || controls.keyS)
+			camera.position += (controls.keyW - controls.keyS) * moveDelta * glm::normalize(camera.direction + camera.up);
+		if (controls.keyA || controls.keyD)
+			camera.position += (controls.keyA - controls.keyD) * moveDelta * left;
+		if (controls.keyR || controls.keyF)
+			camera.position += (controls.keyR - controls.keyF) * moveDelta * camera.direction;
+		if (controls.keyQ || controls.keyE) {
+			auto rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{ 0.0f, 0.0f, 1.0f });
+
+			auto direction = glm::normalize(glm::vec2{ camera.direction });
+			camera.position += camera.position.z * glm::vec3{ direction, 0.0f };
+			camera.direction = rotation * glm::vec4{ camera.direction, 0.0f };
+
+			direction = glm::normalize(glm::vec2{ camera.direction });
+			camera.position -= camera.position.z * glm::vec3{ direction, 0.0f };
+			camera.up = rotation * glm::vec4{ camera.up, 0.0f };
+		}
+	}
+
+	else {
+		camera.previous = camera.position;
+
+		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
+
+		camera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
+														  glm::rotate(turnDelta * controls.deltaX, camera.up) *
+														  glm::vec4{camera.direction, 0.0f} });
+
+		left = glm::normalize(glm::cross(camera.up, camera.direction));
+
+		camera.position += moveDelta * (controls.keyW - controls.keyS) * camera.direction +
+			moveDelta * (controls.keyA - controls.keyD) * left;
+
+		auto coefficient = 0.0f, distance = glm::length(camera.position - camera.previous);
+		auto direction = glm::normalize(camera.position - camera.previous);
+
+		for (auto& portal : portals) {
+			if (svh::epsilon < distance && glm::intersectRayPlane(camera.previous, direction, portal.mesh.origin, portal.direction, coefficient)) {
+				auto point = camera.previous + coefficient * direction;
+
+				if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&
+					point.x <= portal.mesh.maxBorders.x && point.y <= portal.mesh.maxBorders.y && point.z <= portal.mesh.maxBorders.z &&
+					0 <= coefficient && distance >= coefficient) {
+
+					camera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
+					camera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
+					camera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
+
+					camera.previous = camera.position;
+
+					break;
+				}
+			}
+		}
+	}
+
+	controls.deltaX = 0.0f;
+	controls.deltaY = 0.0f;
+
+	auto view = glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
+	auto projection = glm::perspective(glm::radians(45.0f),
+		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
+	projection[1][1] *= -1;
+
+	camera.transform = projection * view;
+
+	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
+
+	if (controls.observer)
+		observer = camera;
+	else
+		player = camera;
+
+	for (auto& portal : portals) {
+		svh::Camera portalCamera = camera;
+		portalCamera.position = portal.cameraTransform * glm::vec4{ portalCamera.position, 1.0f };
+
+		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
+		auto portalProjection = glm::perspective(glm::radians(45.0f),
+			static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
+		/*
+		auto plane = glm::vec4{ portal.normal, glm::dot(-portal.normal, portal.origin) };
+
+		glm::vec4 quaternion{};
+		quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
+		quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
+		quaternion.z = -1.0f;
+		quaternion.w = portalProjection[2][2] / portalProjection[3][2];
+
+		auto clip = plane * (1.0f / glm::dot(plane, quaternion));
+
+		portalProjection[0][2] = clip.x;
+		portalProjection[1][2] = clip.y;
+		portalProjection[2][2] = clip.z;
+		portalProjection[3][2] = clip.w;
+		*/
+		portalProjection[1][1] *= -1;
+
+		portal.transform = portalProjection * portalView;
 	}
 }
 
@@ -1749,27 +1778,22 @@ void draw() {
 	state.threadsActive = true;
 	state.currentTime = std::chrono::high_resolution_clock::now();
 
-	data = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, 0, details.imageCount * details.uniformStride));
+	deviceMemory = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, 0, details.uniformSize));
 
-	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
-		updateScene(imageIndex);
+	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++)
 		recordThreads.push_back(std::thread(recordCommands, imageIndex));
-	}
 
 	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++)
 		renderThreads.push_back(std::thread(renderImage, imageIndex));
 
-	//threadSemaphores.front()->release();
+	threadSemaphores.front()->release();
 	
-	while (1) {
+	while (true) {
 		glfwPollEvents();
 		if (glfwWindowShouldClose(window))
 			break;
 
-		state.previousTime = state.currentTime;
-		state.currentTime = std::chrono::high_resolution_clock::now();
-		state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
-		state.checkPoint += state.timeDelta;
+		gameTick();
 
 		if (state.checkPoint > 1.0) {
 			state.totalFrameCount += state.frameCount;
