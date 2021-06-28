@@ -47,7 +47,7 @@ std::vector<svh::Status> commandBufferStatuses;
 std::vector<std::thread> recordThreads, renderThreads;
 std::vector<vk::Fence> submitFences;
 std::vector<vk::Semaphore> submitSemaphores, presentSemaphores;
-std::vector<std::unique_ptr<std::binary_semaphore>> swapchainSemaphores, threadSemaphores;
+std::vector<std::unique_ptr<std::binary_semaphore>> swapchainSemaphores;
 std::mutex acquireMutex;
 std::vector<std::unique_ptr<std::mutex>> swapchainMutexes;
 std::counting_semaphore<std::numeric_limits<ptrdiff_t>::max()> recordingSemaphore(0);
@@ -74,8 +74,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 void mouseCallback(GLFWwindow* handle, double x, double y) {
 	static_cast<void>(handle);
 
-	controls.deltaX += controls.mouseX - x;
-	controls.deltaY += y - controls.mouseY;
+	controls.deltaX = controls.mouseX - x;
+	controls.deltaY = y - controls.mouseY;
 	controls.mouseX = x;
 	controls.mouseY = y;
 }
@@ -1290,7 +1290,7 @@ void createDescriptorSets() {
 		vk::DescriptorBufferInfo uniformInfo{};
 		uniformInfo.buffer = uniformBuffer.buffer;
 		uniformInfo.offset = 0;
-		uniformInfo.range = details.uniformFrameStride;
+		uniformInfo.range = details.uniformAlignment;
 
 		vk::DescriptorImageInfo samplerInfo{};
 		samplerInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
@@ -1358,7 +1358,6 @@ void createSyncObjects() {
 	submitFences.reserve(details.concurrentImageCount);
 	submitSemaphores.reserve(details.concurrentImageCount);
 	presentSemaphores.reserve(details.concurrentImageCount);
-	threadSemaphores.reserve(details.concurrentImageCount);
 
 	swapchainMutexes.reserve(details.imageCount);
 	swapchainSemaphores.reserve(details.imageCount);
@@ -1367,7 +1366,6 @@ void createSyncObjects() {
 		submitFences.push_back(device.createFence(fenceInfo));
 		submitSemaphores.push_back(device.createSemaphore(semaphoreInfo));
 		presentSemaphores.push_back(device.createSemaphore(semaphoreInfo));
-		threadSemaphores.push_back(std::make_unique<std::binary_semaphore>(0));
 	}
 
 	for (auto imageIndex = 0u; imageIndex < details.imageCount; imageIndex++) {
@@ -1406,8 +1404,7 @@ void updateUniformBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 
 void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	auto& commandBuffer = commandBuffers.at(imageIndex * details.commandBufferPerImage + queueIndex);
-	//auto uniformOffset = queueIndex * details.uniformQueueStride;
-	auto uniformOffset = queueIndex * details.uniformQueueStride;
+	auto uniformOffset = imageIndex * details.uniformFrameStride + queueIndex * details.uniformQueueStride;
 
 	vk::DeviceSize bufferOffset = 0;
 
@@ -1463,7 +1460,6 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 	auto uniformLocation = uniformOffset + details.portalCount * details.uniformAlignment;
-	//auto uniformLocation = details.portalCount * details.uniformAlignment;
 
 	for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
 		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
@@ -1482,22 +1478,21 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 
 	commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
 
-	/*for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
+	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 		auto& portal = portals.at(portalIndex);
 		
-		uniformLocation = uniformOffset + portalIndex * details.uniformAlignment;
-		//uniformLocation = portalIndex * details.uniformAlignment;
+		auto portalUniformLocation = uniformOffset + portalIndex * details.uniformAlignment;
 
 		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
 
 		for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &portalUniformLocation);
 			
 			for (auto& mesh : meshes)
 				if (mesh.textureIndex == textureIndex)
 					commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
-	}*/
+	}
 
 	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	commandBuffer.endRenderPass();
@@ -1591,8 +1586,6 @@ void renderImage(uint32_t threadIndex) {
 	auto& submitFence = submitFences.at(threadIndex);
 	auto& submitSemaphore = submitSemaphores.at(threadIndex);
 	auto& presentSemaphore = presentSemaphores.at(threadIndex);
-	auto& executionOrder = threadSemaphores.at(threadIndex);
-	auto& nextThread = threadSemaphores.at((threadIndex + 1) % details.concurrentImageCount);
 
 	auto imageIndex = std::numeric_limits<uint32_t>::max();
 	auto commandBufferIndex = std::numeric_limits<uint32_t>::max();
@@ -1625,8 +1618,7 @@ void renderImage(uint32_t threadIndex) {
 			swapchainSemaphores.at(imageIndex)->release();
 		}
 
-		//acquireMutex.lock();
-		executionOrder->acquire();
+		acquireMutex.lock();
 
 		imageIndex = device.acquireNextImageKHR(swapchain, std::numeric_limits<uint64_t>::max(), presentSemaphore, nullptr);
 
@@ -1642,8 +1634,7 @@ void renderImage(uint32_t threadIndex) {
 		presentInfo.pImageIndices = &imageIndex;
 		queue.presentKHR(presentInfo);
 
-		//acquireMutex.unlock();
-		nextThread->release();
+		acquireMutex.unlock();
 
 		state.frameCount++;
 	}
@@ -1785,8 +1776,6 @@ void draw() {
 
 	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++)
 		renderThreads.push_back(std::thread(renderImage, imageIndex));
-
-	threadSemaphores.front()->release();
 	
 	while (true) {
 		glfwPollEvents();
