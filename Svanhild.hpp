@@ -55,15 +55,11 @@ namespace svh {
 	};
 
 	struct Controls {
-		bool observer;
 		bool keyW;
 		bool keyA;
 		bool keyS;
 		bool keyD;
-		bool keyQ;
-		bool keyE;
-		bool keyR;
-		bool keyF;
+
 		double_t mouseX;
 		double_t mouseY;
 		float_t deltaX;

@@ -7,7 +7,7 @@ shaderc::CompileOptions shaderOptions;
 
 svh::Controls controls;
 svh::State state;
-svh::Camera player, observer;
+svh::Camera camera;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
 std::vector<std::string> imageNames;
@@ -93,14 +93,6 @@ void keyboardCallback(GLFWwindow* handle, int key, int scancode, int action, int
 			controls.keyA = false;
 		else if (key == GLFW_KEY_D)
 			controls.keyD = false;
-		else if (key == GLFW_KEY_Q)
-			controls.keyQ = false;
-		else if (key == GLFW_KEY_E)
-			controls.keyE = false;
-		else if (key == GLFW_KEY_R)
-			controls.keyR = false;
-		else if (key == GLFW_KEY_F)
-			controls.keyF = false;
 	}
 	else if (action == GLFW_PRESS) {
 		if (key == GLFW_KEY_W)
@@ -111,23 +103,8 @@ void keyboardCallback(GLFWwindow* handle, int key, int scancode, int action, int
 			controls.keyA = true;
 		else if (key == GLFW_KEY_D)
 			controls.keyD = true;
-		else if (key == GLFW_KEY_Q)
-			controls.keyQ = true;
-		else if (key == GLFW_KEY_E)
-			controls.keyE = true;
-		else if (key == GLFW_KEY_R)
-			controls.keyR = true;
-		else if (key == GLFW_KEY_F)
-			controls.keyF = true;
 		else if (key == GLFW_KEY_ESCAPE)
 			glfwSetWindowShouldClose(handle, 1);
-		else if (key == GLFW_KEY_TAB) {
-			if (controls.observer)
-				glfwSetInputMode(handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-			else
-				glfwSetInputMode(handle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-			controls.observer = !controls.observer;
-		}
 	}
 }
 
@@ -139,15 +116,11 @@ void resizeEvent(GLFWwindow* handle, int width, int height) {
 }
 
 void initializeControls() {
-	controls.observer = false;
 	controls.keyW = false;
 	controls.keyA = false;
 	controls.keyS = false;
 	controls.keyD = false;
-	controls.keyQ = false;
-	controls.keyE = false;
-	controls.keyR = false;
-	controls.keyF = false;
+
 	controls.deltaX = 0.0f;
 	controls.deltaY = 0.0f;
 }
@@ -155,14 +128,7 @@ void initializeControls() {
 void initializeCore() {
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-#ifndef NDEBUG
 	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
-#else
-	//glfwWindowHint(GLFW_DECORATED, NULL);
-	//window = glfwCreateWindow(1920, 1080, "", glfwGetPrimaryMonitor(), nullptr);
-	window = glfwCreateWindow(1280, 720, "", nullptr, nullptr);
-#endif
 
 	initializeControls();
 	glfwSetKeyCallback(window, keyboardCallback);
@@ -576,13 +542,12 @@ void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation
 }
 
 //TODO: Use continuous memory for images
-void loadTexture(std::string name, uint32_t levels, vk::Format format,
-	std::string path = std::string{ "assets/environment3/" }, std::string extension = std::string{ ".jpg" }) {
+void loadTexture(std::string name, uint32_t levels, vk::Format format) {
 	svh::Image image{};
 	svh::Buffer buffer{};
 
 	auto width = 0, height = 0, channel = 0;
-	auto pixels = stbi_load((path + name + extension).c_str(), &width, &height, &channel, STBI_rgb_alpha);
+	auto pixels = stbi_load(("assets/" + name + ".jpg").c_str(), &width, &height, &channel, STBI_rgb_alpha);
 	auto size = width * height * 4;
 
 	createBuffer(size, vk::BufferUsageFlagBits::eTransferSrc,
@@ -698,12 +663,11 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 	}
 }
 
-void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, uint8_t targetRoom = 0,
-	const std::string path = std::string{ "assets/environment3/" }, const std::string extension = std::string{ ".gltf" }) {
+void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, uint8_t targetRoom = 0) {
 	std::string error, warning;
 	tinygltf::Model model;
 
-	auto result = objectLoader.LoadASCIIFromFile(&model, &error, &warning, path + name + extension);
+	auto result = objectLoader.LoadASCIIFromFile(&model, &error, &warning, "assets/" + name + ".gltf");
 
 #ifndef NDEBUG
 	if (!warning.empty())
@@ -714,10 +678,8 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 		return;
 #endif
 
-	if (type == svh::Type::Camera) {
-		createCameraFromMatrix(player, getNodeTransformation(model.nodes.front()), sourceRoom);
-		createCameraFromMatrix(observer, getNodeTransformation(model.nodes.back()));
-	}
+	if (type == svh::Type::Camera)
+		createCameraFromMatrix(camera, getNodeTransformation(model.nodes.front()), sourceRoom);
 
 	else {
 		for (auto& image : model.images) {
@@ -735,24 +697,6 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 }
 
 void createScene() {
-	/*
-	loadModel("camera", svh::Type::Camera, 1);
-
-	loadModel("portal", svh::Type::Portal, 1, 2);
-
-	loadModel("room1", svh::Type::Mesh, 1);
-	loadModel("room2", svh::Type::Mesh, 2);
-	*/
-	/*
-	loadModel("camera", svh::Type::Camera, 1);
-	
-	loadModel("portal12", svh::Type::Portal, 1, 2);
-	loadModel("portal23", svh::Type::Portal, 2, 3);
-
-	loadModel("room1", svh::Type::Mesh, 1);
-	loadModel("room2", svh::Type::Mesh, 2);
-	loadModel("room3", svh::Type::Mesh, 3);
-	*/
 	loadModel("camera", svh::Type::Camera, 1);
 	
 	loadModel("portal12", svh::Type::Portal, 1, 2);
@@ -870,7 +814,16 @@ void createRenderPass() {
 }
 
 vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
-	auto path = std::filesystem::current_path() / "shaders" / name;
+	std::string extension{".glsl"};
+
+	if (kind == shaderc_glsl_compute_shader)
+		extension = ".comp";
+	else if (kind == shaderc_glsl_vertex_shader)
+		extension = ".vert";
+	else if (kind == shaderc_glsl_fragment_shader)
+		extension = ".frag";
+
+	auto path = std::filesystem::current_path() / "shaders" / (name + extension);
 	auto size = std::filesystem::file_size(path);
 
 	std::ifstream file(path);
@@ -899,9 +852,9 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 
 void createPipelineLayout() {
 	shaderOptions.SetOptimizationLevel(shaderc_optimization_level_performance);
-	computeShader = loadShader("compute.comp", shaderc_glsl_compute_shader);
-	vertexShader = loadShader("vertex.vert", shaderc_glsl_vertex_shader);
-	fragmentShader = loadShader("fragment.frag", shaderc_glsl_fragment_shader);
+	computeShader = loadShader("compute", shaderc_glsl_compute_shader);
+	vertexShader = loadShader("vertex", shaderc_glsl_vertex_shader);
+	fragmentShader = loadShader("fragment", shaderc_glsl_fragment_shader);
 
 	vk::DescriptorSetLayoutBinding frustumPlanesBinding{};
 	frustumPlanesBinding.binding = 0;
@@ -1395,7 +1348,6 @@ void updateUniformBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 
 	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
 
-	auto& camera = controls.observer ? observer : player;
 	std::memcpy(deviceMemory + uniformOffset + details.portalCount * details.uniformAlignment, &camera.transform, sizeof(glm::mat4));
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++)
@@ -1646,69 +1598,43 @@ void gameTick() {
 	state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 	state.checkPoint += state.timeDelta;
 
-	auto moveDelta = static_cast<float_t>(state.timeDelta) * 12.0f, turnDelta = static_cast<float_t>(state.timeDelta) * glm::radians(360.0f);
+	auto moveDelta = static_cast<float_t>(state.timeDelta) * 12.0f, turnDelta = static_cast<float_t>(state.timeDelta) * glm::radians(240.0f);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
 
 	if (vectorCount > 0)
 		moveDelta /= std::sqrt(vectorCount);
+	
+	camera.previous = camera.position;
 
-	auto camera = controls.observer ? observer : player;
+	auto left = glm::normalize(glm::cross(camera.up, camera.direction));
 
-	if (controls.observer) {
-		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
+	camera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
+														glm::rotate(turnDelta * controls.deltaX, camera.up) *
+														glm::vec4{camera.direction, 0.0f} });
 
-		if (controls.keyW || controls.keyS)
-			camera.position += (controls.keyW - controls.keyS) * moveDelta * glm::normalize(camera.direction + camera.up);
-		if (controls.keyA || controls.keyD)
-			camera.position += (controls.keyA - controls.keyD) * moveDelta * left;
-		if (controls.keyR || controls.keyF)
-			camera.position += (controls.keyR - controls.keyF) * moveDelta * camera.direction;
-		if (controls.keyQ || controls.keyE) {
-			auto rotation = glm::rotate((controls.keyQ - controls.keyE) * turnDelta, glm::vec3{ 0.0f, 0.0f, 1.0f });
+	left = glm::normalize(glm::cross(camera.up, camera.direction));
 
-			auto direction = glm::normalize(glm::vec2{ camera.direction });
-			camera.position += camera.position.z * glm::vec3{ direction, 0.0f };
-			camera.direction = rotation * glm::vec4{ camera.direction, 0.0f };
+	camera.position += moveDelta * (controls.keyW - controls.keyS) * camera.direction +
+		moveDelta * (controls.keyA - controls.keyD) * left;
 
-			direction = glm::normalize(glm::vec2{ camera.direction });
-			camera.position -= camera.position.z * glm::vec3{ direction, 0.0f };
-			camera.up = rotation * glm::vec4{ camera.up, 0.0f };
-		}
-	}
+	auto coefficient = 0.0f, distance = glm::length(camera.position - camera.previous);
+	auto direction = glm::normalize(camera.position - camera.previous);
 
-	else {
-		camera.previous = camera.position;
+	for (auto& portal : portals) {
+		if (svh::epsilon < distance && glm::intersectRayPlane(camera.previous, direction, portal.mesh.origin, portal.direction, coefficient)) {
+			auto point = camera.previous + coefficient * direction;
 
-		auto left = glm::normalize(glm::cross(camera.up, camera.direction));
+			if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&
+				point.x <= portal.mesh.maxBorders.x && point.y <= portal.mesh.maxBorders.y && point.z <= portal.mesh.maxBorders.z &&
+				0 <= coefficient && distance >= coefficient) {
 
-		camera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
-														  glm::rotate(turnDelta * controls.deltaX, camera.up) *
-														  glm::vec4{camera.direction, 0.0f} });
+				camera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
+				camera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
+				camera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
 
-		left = glm::normalize(glm::cross(camera.up, camera.direction));
+				camera.previous = camera.position;
 
-		camera.position += moveDelta * (controls.keyW - controls.keyS) * camera.direction +
-			moveDelta * (controls.keyA - controls.keyD) * left;
-
-		auto coefficient = 0.0f, distance = glm::length(camera.position - camera.previous);
-		auto direction = glm::normalize(camera.position - camera.previous);
-
-		for (auto& portal : portals) {
-			if (svh::epsilon < distance && glm::intersectRayPlane(camera.previous, direction, portal.mesh.origin, portal.direction, coefficient)) {
-				auto point = camera.previous + coefficient * direction;
-
-				if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&
-					point.x <= portal.mesh.maxBorders.x && point.y <= portal.mesh.maxBorders.y && point.z <= portal.mesh.maxBorders.z &&
-					0 <= coefficient && distance >= coefficient) {
-
-					camera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
-					camera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
-					camera.up = portal.cameraTransform * glm::vec4{ camera.up, 0.0f };
-
-					camera.previous = camera.position;
-
-					break;
-				}
+				break;
 			}
 		}
 	}
@@ -1724,11 +1650,6 @@ void gameTick() {
 	camera.transform = projection * view;
 
 	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
-
-	if (controls.observer)
-		observer = camera;
-	else
-		player = camera;
 
 	for (auto& portal : portals) {
 		svh::Camera portalCamera = camera;
