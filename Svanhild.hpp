@@ -159,8 +159,5 @@ namespace svh {
 		glm::mat4 cameraTransform;
 
 		glm::mat4 transform;
-
-		vk::Pipeline stencilPipeline;
-		vk::Pipeline renderPipeline;
 	};
 }

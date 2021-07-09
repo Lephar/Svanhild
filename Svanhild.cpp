@@ -31,7 +31,7 @@ vk::RenderPass renderPass;
 vk::ShaderModule computeShader, vertexShader, fragmentShader;
 vk::DescriptorSetLayout computeSetLayout, graphicsSetLayout;
 vk::PipelineLayout computePipelineLayout, graphicsPipelineLayout;
-vk::Pipeline computePipeline, graphicsPipeline;
+vk::Pipeline computePipeline, graphicsPipeline, stencilPipeline, renderPipeline;
 std::vector <svh::Image> colorImages, depthImages;
 std::vector<vk::Framebuffer> framebuffers;
 svh::Buffer indexBuffer, vertexBuffer, uniformBuffer;
@@ -623,13 +623,13 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 		vertices.push_back(vertex);
 	}
 
-	//auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
+	auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
 	auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ -std::numeric_limits<float_t>::max() };
 
 	for (auto index = 0u; index < mesh.vertexLength; index++) {
 		auto& vertex = vertices.at(mesh.vertexOffset + index);
 
-		//origin += vertex.position;
+		origin += vertex.position;
 		//normal += vertex.normal;
 
 		min.x = std::min(min.x, vertex.position.x);
@@ -641,11 +641,15 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 		max.z = std::max(max.z, vertex.position.z);
 	}
 
-	//mesh.origin = origin / static_cast<float_t>(mesh.vertexLength);
+	mesh.origin = origin / static_cast<float_t>(mesh.vertexLength);
 	//mesh.normal = glm::normalize(normal);
-	mesh.origin = mesh.sourceTransform * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
+	mesh.origin = glm::vec3{ translation * scale * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f } };
 	mesh.minBorders = min;
 	mesh.maxBorders = max;
+
+	//if(type == svh::Type::Portal)
+	//	for(int i = 0; i < 4; i++)
+	//		std::cout << origin[i] << " " << mesh.origin[i] << std::endl;
 
 	if (type == svh::Type::Mesh) {
 		details.meshCount++;
@@ -656,7 +660,7 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 		svh::Portal portal{};
 
 		portal.mesh = mesh;
-		portal.direction = rotation * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
+		portal.direction = glm::normalize(rotation * glm::vec4{ 0.0f, 1.0f, 0.0f, 0.0f });
 
 		details.portalCount++;
 		portals.push_back(portal);
@@ -692,6 +696,20 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 		for (auto& node : model.nodes) {
 			auto& mesh = model.meshes.at(node.mesh);
 			loadMesh(model, mesh, type, getTextureIndex(model, mesh), getNodeTranslation(node), getNodeRotation(node), getNodeScale(node));
+		}
+
+		if (type == svh::Type::Portal) {
+			auto& bluePortal = portals.at(portals.size() - 2);
+			auto& orangePortal = portals.at(portals.size() - 1);
+
+			bluePortal.targetRoom = orangePortal.mesh.sourceRoom;
+			orangePortal.targetRoom = bluePortal.mesh.sourceRoom;
+
+			bluePortal.targetTransform = orangePortal.mesh.sourceTransform;
+			orangePortal.targetTransform = bluePortal.mesh.sourceTransform;
+
+			bluePortal.cameraTransform = bluePortal.targetTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(bluePortal.mesh.sourceTransform);
+			orangePortal.cameraTransform = orangePortal.targetTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(orangePortal.mesh.sourceTransform);
 		}
 	}
 }
@@ -1109,24 +1127,28 @@ void createPipelines() {
 
 	graphicsPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 
+	std::array<vk::DynamicState, 1> dynamicStates = { vk::DynamicState::eStencilReference };
+
+	vk::PipelineDynamicStateCreateInfo dynamicInfo{};
+	dynamicInfo.dynamicStateCount = dynamicStates.size();
+	dynamicInfo.pDynamicStates = dynamicStates.data();
+
+	graphicsPipelineInfo.pDynamicState = &dynamicInfo;
+
 	depthStencil.stencilTestEnable = true;
 	stencilOpState.passOp = vk::StencilOp::eReplace;
 	stencilOpState.compareOp = vk::CompareOp::eAlways;
 
-	for (auto index = 0u; index < details.portalCount; index++) {
-		stencilOpState.reference = index + 1;
-		depthStencil.front = stencilOpState;
-		portals.at(index).stencilPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
-	}
+	stencilOpState.reference = 0;
+	depthStencil.front = stencilOpState;
+	stencilPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 
 	stencilOpState.passOp = vk::StencilOp::eKeep;
 	stencilOpState.compareOp = vk::CompareOp::eEqual;
 
-	for (auto index = 0u; index < details.portalCount; index++) {
-		stencilOpState.reference = index + 1;
-		depthStencil.front = stencilOpState;
-		portals.at(index).renderPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
-	}
+	stencilOpState.reference = 0;
+	depthStencil.front = stencilOpState;
+	renderPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 }
 
 void createFramebuffers() {
@@ -1422,20 +1444,24 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	}
 
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
-	
-	for (auto& portal : portals) {
-		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.stencilPipeline);
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, stencilPipeline);
+
+	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
+		auto& portal = portals.at(portalIndex);
+
+		commandBuffer.setStencilReference(vk::StencilFaceFlagBits::eFront, portalIndex + 1);
 		commandBuffer.drawIndexed(portal.mesh.indexLength, 1, portal.mesh.indexOffset, portal.mesh.vertexOffset, 0);
 	}
 
 	commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, renderPipeline);
 
 	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++) {
 		auto& portal = portals.at(portalIndex);
-		
+
 		auto portalUniformLocation = uniformOffset + portalIndex * details.uniformAlignment;
 
-		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, portal.renderPipeline);
+		commandBuffer.setStencilReference(vk::StencilFaceFlagBits::eFront, portalIndex + 1);
 
 		for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &portalUniformLocation);
@@ -1758,10 +1784,8 @@ void clear() {
 		device.destroyImage(texture.image);
 		device.freeMemory(texture.memory);
 	}
-	for (auto& portal : portals) {
-		device.destroyPipeline(portal.renderPipeline);
-		device.destroyPipeline(portal.stencilPipeline);
-	}
+	device.destroyPipeline(renderPipeline);
+	device.destroyPipeline(stencilPipeline);
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipeline(computePipeline);
 	device.destroyPipelineLayout(graphicsPipelineLayout);
