@@ -74,8 +74,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 void mouseCallback(GLFWwindow* handle, double x, double y) {
 	static_cast<void>(handle);
 
-	controls.deltaX = controls.mouseX - x;
-	controls.deltaY = y - controls.mouseY;
+	controls.deltaX += controls.mouseX - x;
+	controls.deltaY += y - controls.mouseY;
 	controls.mouseX = x;
 	controls.mouseY = y;
 }
@@ -623,14 +623,10 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 		vertices.push_back(vertex);
 	}
 
-	auto origin = glm::vec3{ 0.0f }, normal = glm::vec3{ 0.0f };
 	auto min = glm::vec3{ std::numeric_limits<float_t>::max() }, max = glm::vec3{ -std::numeric_limits<float_t>::max() };
 
 	for (auto index = 0u; index < mesh.vertexLength; index++) {
 		auto& vertex = vertices.at(mesh.vertexOffset + index);
-
-		origin += vertex.position;
-		//normal += vertex.normal;
 
 		min.x = std::min(min.x, vertex.position.x);
 		min.y = std::min(min.y, vertex.position.y);
@@ -641,15 +637,9 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 		max.z = std::max(max.z, vertex.position.z);
 	}
 
-	mesh.origin = origin / static_cast<float_t>(mesh.vertexLength);
-	//mesh.normal = glm::normalize(normal);
-	mesh.origin = glm::vec3{ translation * scale * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f } };
+	mesh.origin = glm::vec3{ mesh.sourceTransform * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f } };
 	mesh.minBorders = min;
 	mesh.maxBorders = max;
-
-	//if(type == svh::Type::Portal)
-	//	for(int i = 0; i < 4; i++)
-	//		std::cout << origin[i] << " " << mesh.origin[i] << std::endl;
 
 	if (type == svh::Type::Mesh) {
 		details.meshCount++;
@@ -660,7 +650,7 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 		svh::Portal portal{};
 
 		portal.mesh = mesh;
-		portal.direction = glm::normalize(rotation * glm::vec4{ 0.0f, 1.0f, 0.0f, 0.0f });
+		portal.direction = glm::normalize(glm::vec3(mesh.sourceTransform * glm::vec4{ -1.0f, 0.0f, 0.0f, 0.0f }));
 
 		details.portalCount++;
 		portals.push_back(portal);
@@ -701,6 +691,7 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 		if (type == svh::Type::Portal) {
 			auto& bluePortal = portals.at(portals.size() - 2);
 			auto& orangePortal = portals.at(portals.size() - 1);
+			auto portalRotation = glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f });
 
 			bluePortal.targetRoom = orangePortal.mesh.sourceRoom;
 			orangePortal.targetRoom = bluePortal.mesh.sourceRoom;
@@ -708,8 +699,8 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 			bluePortal.targetTransform = orangePortal.mesh.sourceTransform;
 			orangePortal.targetTransform = bluePortal.mesh.sourceTransform;
 
-			bluePortal.cameraTransform = bluePortal.targetTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(bluePortal.mesh.sourceTransform);
-			orangePortal.cameraTransform = orangePortal.targetTransform * glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f }) * glm::inverse(orangePortal.mesh.sourceTransform);
+			bluePortal.cameraTransform = bluePortal.targetTransform * portalRotation * glm::inverse(bluePortal.mesh.sourceTransform);
+			orangePortal.cameraTransform = orangePortal.targetTransform * portalRotation * glm::inverse(orangePortal.mesh.sourceTransform);
 		}
 	}
 }
@@ -1624,27 +1615,27 @@ void gameTick() {
 	state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 	state.checkPoint += state.timeDelta;
 
-	auto moveDelta = static_cast<float_t>(state.timeDelta) * 12.0f, turnDelta = static_cast<float_t>(state.timeDelta) * glm::radians(240.0f);
+	auto moveDelta = state.timeDelta * 6.0, turnDelta = state.timeDelta * glm::radians(30.0);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
 
 	if (vectorCount > 0)
 		moveDelta /= std::sqrt(vectorCount);
-	
-	camera.previous = camera.position;
 
 	auto left = glm::normalize(glm::cross(camera.up, camera.direction));
 
-	camera.direction = glm::normalize(glm::vec3{ glm::rotate(turnDelta * controls.deltaY, left) *
-														glm::rotate(turnDelta * controls.deltaX, camera.up) *
+	camera.direction = glm::normalize(glm::vec3{ glm::rotate<float_t>(turnDelta * controls.deltaY, left) *
+														glm::rotate<float_t>(turnDelta * controls.deltaX, camera.up) *
 														glm::vec4{camera.direction, 0.0f} });
 
 	left = glm::normalize(glm::cross(camera.up, camera.direction));
 
-	camera.position += moveDelta * (controls.keyW - controls.keyS) * camera.direction +
-		moveDelta * (controls.keyA - controls.keyD) * left;
+	camera.previous = camera.position;
+	camera.position += static_cast<float_t>(moveDelta * (controls.keyW - controls.keyS)) * camera.direction +
+		static_cast<float_t>(moveDelta * (controls.keyA - controls.keyD)) * left;
 
-	auto coefficient = 0.0f, distance = glm::length(camera.position - camera.previous);
-	auto direction = glm::normalize(camera.position - camera.previous);
+	auto replacement = camera.position - camera.previous;
+	auto direction = glm::normalize(replacement);
+	auto coefficient = 0.0f, distance = glm::length(replacement);
 
 	for (auto& portal : portals) {
 		if (svh::epsilon < distance && glm::intersectRayPlane(camera.previous, direction, portal.mesh.origin, portal.direction, coefficient)) {
@@ -1684,13 +1675,13 @@ void gameTick() {
 		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
 		auto portalProjection = glm::perspective(glm::radians(45.0f),
 			static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
-		/*
-		auto plane = glm::vec4{ portal.normal, glm::dot(-portal.normal, portal.origin) };
+		
+		auto plane = glm::vec4{ portal.direction, glm::dot(-portal.direction, portal.mesh.origin) };
 
 		glm::vec4 quaternion{};
 		quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
 		quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
-		quaternion.z = -1.0f;
+		quaternion.z = 1.0f;
 		quaternion.w = portalProjection[2][2] / portalProjection[3][2];
 
 		auto clip = plane * (1.0f / glm::dot(plane, quaternion));
@@ -1699,11 +1690,12 @@ void gameTick() {
 		portalProjection[1][2] = clip.y;
 		portalProjection[2][2] = clip.z;
 		portalProjection[3][2] = clip.w;
-		*/
+		
 		portalProjection[1][1] *= -1;
 
 		portal.transform = portalProjection * portalView;
 	}
+
 }
 
 //TODO: Split present and retrieve
@@ -1740,7 +1732,7 @@ void draw() {
 		}
 
 		//std::this_thread::sleep_for(std::chrono::microseconds(10));
-		//std::this_thread::sleep_until(state.currentTime + std::chrono::milliseconds(1));
+		std::this_thread::sleep_until(state.currentTime + std::chrono::milliseconds(1));
 	}
 
 	state.threadsActive = false;

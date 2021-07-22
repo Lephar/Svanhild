@@ -62,8 +62,8 @@ namespace svh {
 
 		double_t mouseX;
 		double_t mouseY;
-		float_t deltaX;
-		float_t deltaY;
+		double_t deltaX;
+		double_t deltaY;
 	};
 
 	struct Details {
@@ -159,5 +159,9 @@ namespace svh {
 		glm::mat4 cameraTransform;
 
 		glm::mat4 transform;
+	};
+
+	struct Node {
+
 	};
 }
