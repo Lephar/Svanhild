@@ -31,6 +31,7 @@ void main()
 	outputPosition = inputPosition;
 	outputNormal = inputNormal;
 	outputTexture = inputTexture;
-
-	gl_Position = distort(transform * vec4(outputPosition, 1.0f));
+	
+	gl_Position = transform * vec4(outputPosition, 1.0f);
+	//gl_Position = distort(transform * vec4(outputPosition, 1.0f));
 }

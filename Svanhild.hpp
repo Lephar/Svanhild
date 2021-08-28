@@ -35,6 +35,7 @@
 #include <shaderc/shaderc.hpp>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
+#include <librealsense2/rs.hpp>
 
 namespace svh {
 	constexpr auto epsilon = 0.0009765625f;

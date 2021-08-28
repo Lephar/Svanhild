@@ -4,6 +4,7 @@ GLFWwindow* window;
 tinygltf::TinyGLTF objectLoader;
 shaderc::Compiler shaderCompiler;
 shaderc::CompileOptions shaderOptions;
+rs2::pipeline rsCamera;
 
 svh::Controls controls;
 svh::State state;
@@ -536,7 +537,8 @@ glm::mat4 getNodeTransformation(const tinygltf::Node& node) {
 void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation, uint32_t room = 0) {
 	camera.room = room;
 	camera.position = transformation * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
-	camera.direction = transformation * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
+	//camera.direction = transformation * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
+	camera.direction = glm::vec4{ 1.0f, 0.0f, 0.0f, 0.0f }; 
 	camera.up = transformation * glm::vec4{ 0.0f, 0.0f, 1.0f, 0.0f };
 	camera.previous = camera.position;
 }
@@ -1609,12 +1611,16 @@ void renderImage(uint32_t threadIndex) {
 	}
 }
 
+float map(float value, float sMin, float sMax, float tMin, float tMax) {
+	return tMin + (tMax - tMin) * (value - sMin) / (sMax - sMin);
+}
+
 void gameTick() {
 	state.previousTime = state.currentTime;
 	state.currentTime = std::chrono::high_resolution_clock::now();
 	state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 	state.checkPoint += state.timeDelta;
-
+	/*
 	auto moveDelta = state.timeDelta * 6.0, turnDelta = state.timeDelta * glm::radians(30.0);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
 
@@ -1628,10 +1634,43 @@ void gameTick() {
 														glm::vec4{camera.direction, 0.0f} });
 
 	left = glm::normalize(glm::cross(camera.up, camera.direction));
-
+	
 	camera.previous = camera.position;
 	camera.position += static_cast<float_t>(moveDelta * (controls.keyW - controls.keyS)) * camera.direction +
 		static_cast<float_t>(moveDelta * (controls.keyA - controls.keyD)) * left;
+	*/
+
+	rs2::frameset rsFrames;
+	
+	auto mini = -1;
+	auto minj = -1;
+	auto mind = 2.0f;
+
+	if (rsCamera.try_wait_for_frames(&rsFrames, 0)) {
+		rs2::depth_frame rsDepth = rsFrames.get_depth_frame();
+
+		auto rsWidth = rsDepth.get_width();
+		auto rsHeight = rsDepth.get_height();
+
+		for (int i = rsWidth / 4; i < 3 * rsWidth / 4; i++) {
+			for (int j = rsHeight / 4; j < 3 * rsHeight / 4; j++) {
+				auto rsDistance = rsDepth.get_distance(i, j);
+
+				if (rsDistance < mind && rsDistance > 0.5f) {
+					mini = i;
+					minj = j;
+					mind = rsDistance;
+				}
+			}
+		}
+
+		camera.previous = camera.position;
+		camera.position = (camera.position + glm::vec3 {
+			-map(mind, 0.5f, 2.0f, -12, 4),
+			map(mini, rsWidth / 4, 3 * rsWidth / 4, -12, 12),
+			-map(minj, rsHeight / 4, 3 * rsHeight / 4, -4, -0)
+		}) / 2.0f;
+	}
 
 	auto replacement = camera.position - camera.previous;
 	auto direction = glm::normalize(replacement);
@@ -1715,7 +1754,9 @@ void draw() {
 
 	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++)
 		renderThreads.push_back(std::thread(renderImage, imageIndex));
-	
+
+	rsCamera.start();
+
 	while (true) {
 		glfwPollEvents();
 		if (glfwWindowShouldClose(window))
