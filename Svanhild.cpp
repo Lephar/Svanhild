@@ -4,7 +4,7 @@ GLFWwindow* window;
 tinygltf::TinyGLTF objectLoader;
 shaderc::Compiler shaderCompiler;
 shaderc::CompileOptions shaderOptions;
-rs2::pipeline rsCamera;
+//rs2::pipeline rsCamera;
 
 svh::Controls controls;
 svh::State state;
@@ -740,7 +740,7 @@ void createSwapchain() {
 	swapchainInfo.preTransform = details.swapchainTransform;
 	swapchainInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
 	swapchainInfo.imageSharingMode = vk::SharingMode::eExclusive;
-	swapchainInfo.presentMode = vk::PresentModeKHR::eImmediate;
+	swapchainInfo.presentMode = details.presentMode;
 	swapchainInfo.clipped = true;
 	swapchainInfo.oldSwapchain = nullptr;
 
@@ -862,7 +862,9 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 }
 
 void createPipelineLayout() {
+	shaderOptions.SetInvertY(true);
 	shaderOptions.SetOptimizationLevel(shaderc_optimization_level_performance);
+
 	computeShader = loadShader("compute", shaderc_glsl_compute_shader);
 	vertexShader = loadShader("vertex", shaderc_glsl_vertex_shader);
 	fragmentShader = loadShader("fragment", shaderc_glsl_fragment_shader);
@@ -1620,7 +1622,7 @@ void gameTick() {
 	state.currentTime = std::chrono::high_resolution_clock::now();
 	state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 	state.checkPoint += state.timeDelta;
-	/*
+	
 	auto moveDelta = state.timeDelta * 6.0, turnDelta = state.timeDelta * glm::radians(30.0);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
 
@@ -1638,9 +1640,9 @@ void gameTick() {
 	camera.previous = camera.position;
 	camera.position += static_cast<float_t>(moveDelta * (controls.keyW - controls.keyS)) * camera.direction +
 		static_cast<float_t>(moveDelta * (controls.keyA - controls.keyD)) * left;
-	*/
+	
 
-	rs2::frameset rsFrames;
+	/*rs2::frameset rsFrames;
 	
 	auto mini = -1;
 	auto minj = -1;
@@ -1670,7 +1672,7 @@ void gameTick() {
 			map(mini, rsWidth / 4, 3 * rsWidth / 4, -12, 12),
 			-map(minj, rsHeight / 4, 3 * rsHeight / 4, -4, -0)
 		}) / 2.0f;
-	}
+	}*/
 
 	auto replacement = camera.position - camera.previous;
 	auto direction = glm::normalize(replacement);
@@ -1701,7 +1703,7 @@ void gameTick() {
 	auto view = glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
 	auto projection = glm::perspective(glm::radians(45.0f),
 		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
-	projection[1][1] *= -1;
+	//projection[1][1] *= -1;
 
 	camera.transform = projection * view;
 
@@ -1755,7 +1757,7 @@ void draw() {
 	for (auto imageIndex = 0u; imageIndex < details.concurrentImageCount; imageIndex++)
 		renderThreads.push_back(std::thread(renderImage, imageIndex));
 
-	rsCamera.start();
+	//rsCamera.start();
 
 	while (true) {
 		glfwPollEvents();
