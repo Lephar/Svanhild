@@ -15,6 +15,9 @@ std::vector<std::string> imageNames;
 std::vector<svh::Image> textures;
 std::vector<svh::Mesh> meshes;
 std::vector<svh::Portal> portals;
+std::vector<glm::mat4> cameras;
+std::queue<uint32_t> portalQueue;
+uint32_t treeSize;
 
 vk::Instance instance;
 vk::SurfaceKHR surface;
@@ -75,7 +78,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback(VkDebugUtilsMessageSeverityFlagBi
 void mouseCallback(GLFWwindow* handle, double x, double y) {
 	static_cast<void>(handle);
 
-	controls.deltaX += controls.mouseX - x;
+	controls.deltaX += x - controls.mouseX;
 	controls.deltaY += y - controls.mouseY;
 	controls.mouseX = x;
 	controls.mouseY = y;
@@ -534,7 +537,7 @@ glm::mat4 getNodeTransformation(const tinygltf::Node& node) {
 	return getNodeTranslation(node) * getNodeRotation(node) * getNodeScale(node);
 }
 
-void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation, uint32_t room = 0) {
+void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation, uint32_t room) {
 	camera.room = room;
 	camera.position = transformation * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
 	//camera.direction = transformation * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
@@ -576,7 +579,7 @@ void loadTexture(std::string name, uint32_t levels, vk::Format format) {
 }
 
 void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, svh::Type type, uint32_t textureIndex,
-	const glm::mat4& translation, const glm::mat4& rotation, const glm::mat4& scale, uint8_t sourceRoom = 0, uint8_t targetRoom = 0) {
+	const glm::mat4& translation, const glm::mat4& rotation, const glm::mat4& scale, uint8_t room) {
 	auto& primitive = meshData.primitives.front();
 	auto& indexReference = modelData.bufferViews.at(primitive.indices);
 	auto& indexData = modelData.buffers.at(indexReference.buffer);
@@ -585,6 +588,8 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 
 	mesh.indexOffset = indices.size();
 	mesh.indexLength = indexReference.byteLength / sizeof(uint16_t);
+
+	mesh.sourceRoom = room;
 	mesh.sourceTransform = translation * rotation * scale;
 
 	indices.resize(mesh.indexOffset + mesh.indexLength);
@@ -687,7 +692,7 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 
 		for (auto& node : model.nodes) {
 			auto& mesh = model.meshes.at(node.mesh);
-			loadMesh(model, mesh, type, getTextureIndex(model, mesh), getNodeTranslation(node), getNodeRotation(node), getNodeScale(node));
+			loadMesh(model, mesh, type, getTextureIndex(model, mesh), getNodeTranslation(node), getNodeRotation(node), getNodeScale(node), sourceRoom);
 		}
 
 		if (type == svh::Type::Portal) {
@@ -695,8 +700,8 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 			auto& orangePortal = portals.at(portals.size() - 1);
 			auto portalRotation = glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f });
 
-			bluePortal.targetRoom = orangePortal.mesh.sourceRoom;
-			orangePortal.targetRoom = bluePortal.mesh.sourceRoom;
+			bluePortal.targetRoom = orangePortal.mesh.sourceRoom = targetRoom;
+			orangePortal.targetRoom = bluePortal.mesh.sourceRoom = sourceRoom;
 
 			bluePortal.targetTransform = orangePortal.mesh.sourceTransform;
 			orangePortal.targetTransform = bluePortal.mesh.sourceTransform;
@@ -862,7 +867,7 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 }
 
 void createPipelineLayout() {
-	shaderOptions.SetInvertY(true);
+	//shaderOptions.SetInvertY(true);
 	shaderOptions.SetOptimizationLevel(shaderc_optimization_level_performance);
 
 	computeShader = loadShader("compute", shaderc_glsl_compute_shader);
@@ -1018,7 +1023,7 @@ void createPipelines() {
 	rasterizerInfo.polygonMode = vk::PolygonMode::eFill;
 	rasterizerInfo.lineWidth = 1.0f;
 	rasterizerInfo.cullMode = vk::CullModeFlagBits::eBack;
-	rasterizerInfo.frontFace = vk::FrontFace::eCounterClockwise;
+	rasterizerInfo.frontFace = vk::FrontFace::eClockwise;
 	rasterizerInfo.depthBiasEnable = false;
 	rasterizerInfo.depthBiasConstantFactor = 0.0f;
 	rasterizerInfo.depthBiasClamp = 0.0f;
@@ -1075,9 +1080,9 @@ void createPipelines() {
 
 	vk::Viewport viewport{};
 	viewport.x = 0.0f;
-	viewport.y = 0.0f;
+	viewport.y = static_cast<float_t>(details.swapchainExtent.height);
 	viewport.width = static_cast<float_t>(details.swapchainExtent.width);
-	viewport.height = static_cast<float_t>(details.swapchainExtent.height);
+	viewport.height = -static_cast<float_t>(details.swapchainExtent.height);
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
 
@@ -1624,7 +1629,7 @@ void gameTick() {
 	state.checkPoint += state.timeDelta;
 	
 	auto moveDelta = state.timeDelta * 6.0, turnDelta = state.timeDelta * glm::radians(30.0);
-	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyA - controls.keyD);
+	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyD - controls.keyA);
 
 	if (vectorCount > 0)
 		moveDelta /= std::sqrt(vectorCount);
@@ -1639,7 +1644,7 @@ void gameTick() {
 	
 	camera.previous = camera.position;
 	camera.position += static_cast<float_t>(moveDelta * (controls.keyW - controls.keyS)) * camera.direction +
-		static_cast<float_t>(moveDelta * (controls.keyA - controls.keyD)) * left;
+		static_cast<float_t>(moveDelta * (controls.keyD - controls.keyA)) * left;
 	
 
 	/*rs2::frameset rsFrames;
@@ -1685,6 +1690,7 @@ void gameTick() {
 			if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&
 				point.x <= portal.mesh.maxBorders.x && point.y <= portal.mesh.maxBorders.y && point.z <= portal.mesh.maxBorders.z &&
 				0 <= coefficient && distance >= coefficient) {
+				camera.room = portal.targetRoom;
 
 				camera.position = portal.cameraTransform * glm::vec4{ camera.position, 1.0f };
 				camera.direction = portal.cameraTransform * glm::vec4{ camera.direction, 0.0f };
@@ -1717,8 +1723,8 @@ void gameTick() {
 		auto portalProjection = glm::perspective(glm::radians(45.0f),
 			static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
 		
-		auto plane = glm::vec4{ portal.direction, glm::dot(-portal.direction, portal.mesh.origin) };
-
+		/*auto plane = glm::vec4{portal.direction, glm::dot(-portal.direction, portal.mesh.origin)};
+		
 		glm::vec4 quaternion{};
 		quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
 		quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
@@ -1731,12 +1737,13 @@ void gameTick() {
 		portalProjection[1][2] = clip.y;
 		portalProjection[2][2] = clip.z;
 		portalProjection[3][2] = clip.w;
+		*/
+		//portalProjection[1][1] *= -1;
 		
-		portalProjection[1][1] *= -1;
-
 		portal.transform = portalProjection * portalView;
 	}
 
+	generatePortalTree();
 }
 
 //TODO: Split present and retrieve

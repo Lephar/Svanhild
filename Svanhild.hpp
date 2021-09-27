@@ -17,6 +17,7 @@
 #include <limits>
 #include <optional>
 #include <vector>
+#include <queue>
 #include <chrono>
 #include <memory>
 #include <fstream>
@@ -161,9 +162,5 @@ namespace svh {
 		glm::mat4 cameraTransform;
 
 		glm::mat4 transform;
-	};
-
-	struct Node {
-
 	};
 }
