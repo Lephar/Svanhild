@@ -78,6 +78,7 @@ namespace svh {
 		uint32_t queueCount;
 		uint32_t portalCount;
 		uint32_t meshCount;
+		uint32_t maxCameraCount;
 		uint32_t uniformAlignment;
 		uint32_t uniformQueueStride;
 		uint32_t uniformFrameStride;
@@ -119,8 +120,6 @@ namespace svh {
 		glm::vec3 up;
 
 		glm::vec3 previous;
-
-		glm::mat4 transform;
 	};
 
 	struct Buffer {
@@ -160,7 +159,5 @@ namespace svh {
 		glm::vec3 direction;
 		glm::mat4 targetTransform;
 		glm::mat4 cameraTransform;
-
-		glm::mat4 transform;
 	};
 }

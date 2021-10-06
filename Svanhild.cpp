@@ -7,17 +7,17 @@ shaderc::CompileOptions shaderOptions;
 //rs2::pipeline rsCamera;
 
 svh::Controls controls;
+svh::Details details;
 svh::State state;
 svh::Camera camera;
+glm::mat4 projection;
 std::vector<uint16_t> indices;
 std::vector<svh::Vertex> vertices;
 std::vector<std::string> imageNames;
 std::vector<svh::Image> textures;
 std::vector<svh::Mesh> meshes;
 std::vector<svh::Portal> portals;
-std::vector<glm::mat4> cameras;
-std::queue<uint32_t> portalQueue;
-uint32_t treeSize;
+std::vector<glm::mat4> transforms;
 
 vk::Instance instance;
 vk::SurfaceKHR surface;
@@ -26,7 +26,6 @@ vk::Device device;
 uint32_t queueFamilyIndex;
 vk::Queue mainQueue;
 vk::CommandPool mainCommandPool;
-svh::Details details;
 vk::SwapchainKHR swapchain;
 std::vector<vk::Image> swapchainImages;
 std::vector<vk::ImageView> swapchainViews;
@@ -284,6 +283,8 @@ svh::Details generateDetails() {
 
 	auto uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
 	temporaryDetails.uniformAlignment = ((sizeof(glm::mat4) - 1) / uniformAlignment + 1) * uniformAlignment;
+	
+	temporaryDetails.maxCameraCount = 256;
 
 	return temporaryDetails;
 }
@@ -1220,9 +1221,12 @@ void createElementBuffers() {
 	device.destroyBuffer(stagingBuffer.buffer);
 	device.freeMemory(stagingBuffer.memory);
 
-	details.uniformQueueStride = (details.portalCount + 1) * details.uniformAlignment;
+	details.uniformQueueStride = details.maxCameraCount * details.uniformAlignment;
+	std::cout << details.uniformQueueStride << std::endl;
 	details.uniformFrameStride = details.commandBufferPerImage * details.uniformQueueStride;
+	std::cout << details.uniformFrameStride << std::endl;
 	details.uniformSize = details.imageCount * details.uniformFrameStride;
+	std::cout << details.uniformSize << std::endl;
 
 	createBuffer(details.uniformSize, vk::BufferUsageFlagBits::eUniformBuffer,
 		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
@@ -1370,10 +1374,10 @@ void updateUniformBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 
 	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
 
-	std::memcpy(deviceMemory + uniformOffset + details.portalCount * details.uniformAlignment, &camera.transform, sizeof(glm::mat4));
+	std::memcpy(deviceMemory + uniformOffset + details.portalCount * details.uniformAlignment, &transforms.back(), sizeof(glm::mat4));
 
-	for (auto portalIndex = 0u; portalIndex < details.portalCount; portalIndex++)
-		std::memcpy(deviceMemory + uniformOffset + portalIndex * details.uniformAlignment, &portals.at(portalIndex).transform, sizeof(glm::mat4));
+	for (auto transformIndex = 0u; transformIndex < transforms.size() - 1; transformIndex++)
+		std::memcpy(deviceMemory + uniformOffset + transformIndex * details.uniformAlignment, &transforms.at(transformIndex), sizeof(glm::mat4));
 }
 
 void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
@@ -1622,6 +1626,75 @@ float map(float value, float sMin, float sMax, float tMin, float tMax) {
 	return tMin + (tMax - tMin) * (value - sMin) / (sMax - sMin);
 }
 
+bool visible(svh::Portal& portal, svh::Camera& rawCamera, glm::mat4& processedCamera) {
+	if (portal.mesh.sourceRoom == rawCamera.room)
+		return true;
+	else
+		return false;
+}
+
+void generateCameras() {
+	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
+
+	transforms.clear();
+
+	std::queue<svh::Camera> rawCameraQueue;
+	std::queue<glm::mat4> processedCameraQueue;
+
+	auto mainCamera = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
+	
+	rawCameraQueue.push(camera);
+	processedCameraQueue.push(mainCamera);
+
+	while (transforms.size() != details.maxCameraCount - 1 && !rawCameraQueue.empty() && !processedCameraQueue.empty()) {
+		auto rawCamera = rawCameraQueue.front();
+		auto processedCamera = processedCameraQueue.front();
+
+		rawCameraQueue.pop();
+		processedCameraQueue.pop();
+
+		for (auto& portal : portals) {
+			if (visible(portal, rawCamera, processedCamera)) {
+				auto portalCamera = rawCamera;
+
+				portalCamera.room = portal.targetRoom;
+				portalCamera.position = portal.cameraTransform * glm::vec4{ portalCamera.position, 1.0f };
+				portalCamera.direction = portal.cameraTransform * glm::vec4{ portalCamera.direction, 0.0f };
+
+				auto portalTransform = projection * glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
+				
+				/*auto plane = glm::vec4{portal.direction, glm::dot(-portal.direction, portal.mesh.origin)};
+
+				glm::vec4 quaternion{};
+				quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
+				quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
+				quaternion.z = 1.0f;
+				quaternion.w = portalProjection[2][2] / portalProjection[3][2];
+
+				auto clip = plane * (1.0f / glm::dot(plane, quaternion));
+
+				portalProjection[0][2] = clip.x;
+				portalProjection[1][2] = clip.y;
+				portalProjection[2][2] = clip.z;
+				portalProjection[3][2] = clip.w;
+				*/
+
+				rawCameraQueue.push(portalCamera);
+				processedCameraQueue.push(portalTransform);
+				transforms.push_back(portalTransform);
+
+				if (transforms.size() == details.maxCameraCount - 1)
+					break;
+			}
+		}
+
+		std::cout << "-------------------------------------" << std::endl;
+	}
+
+	transforms.push_back(mainCamera);
+	std::cout << "**********************************************************\t" << transforms.size() << std::endl;
+}
+
 void gameTick() {
 	state.previousTime = state.currentTime;
 	state.currentTime = std::chrono::high_resolution_clock::now();
@@ -1706,44 +1779,7 @@ void gameTick() {
 	controls.deltaX = 0.0f;
 	controls.deltaY = 0.0f;
 
-	auto view = glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
-	auto projection = glm::perspective(glm::radians(45.0f),
-		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
-	//projection[1][1] *= -1;
-
-	camera.transform = projection * view;
-
-	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
-
-	for (auto& portal : portals) {
-		svh::Camera portalCamera = camera;
-		portalCamera.position = portal.cameraTransform * glm::vec4{ portalCamera.position, 1.0f };
-
-		auto portalView = glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
-		auto portalProjection = glm::perspective(glm::radians(45.0f),
-			static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height), 0.001f, 100.0f);
-		
-		/*auto plane = glm::vec4{portal.direction, glm::dot(-portal.direction, portal.mesh.origin)};
-		
-		glm::vec4 quaternion{};
-		quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
-		quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
-		quaternion.z = 1.0f;
-		quaternion.w = portalProjection[2][2] / portalProjection[3][2];
-
-		auto clip = plane * (1.0f / glm::dot(plane, quaternion));
-
-		portalProjection[0][2] = clip.x;
-		portalProjection[1][2] = clip.y;
-		portalProjection[2][2] = clip.z;
-		portalProjection[3][2] = clip.w;
-		*/
-		//portalProjection[1][1] *= -1;
-		
-		portal.transform = portalProjection * portalView;
-	}
-
-	generatePortalTree();
+	generateCameras();
 }
 
 //TODO: Split present and retrieve
@@ -1755,6 +1791,9 @@ void draw() {
 	state.recordingCount = 0;
 	state.threadsActive = true;
 	state.currentTime = std::chrono::high_resolution_clock::now();
+	projection = glm::perspective(glm::radians(45.0f),
+		static_cast<float_t>(details.swapchainExtent.width) / static_cast<float_t>(details.swapchainExtent.height),
+		0.001f, 100.0f);
 
 	deviceMemory = static_cast<uint8_t*>(device.mapMemory(uniformBuffer.memory, 0, details.uniformSize));
 
