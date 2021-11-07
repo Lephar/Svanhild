@@ -284,7 +284,7 @@ svh::Details generateDetails() {
 	auto uniformAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
 	temporaryDetails.uniformAlignment = ((sizeof(glm::mat4) - 1) / uniformAlignment + 1) * uniformAlignment;
 	
-	temporaryDetails.maxCameraCount = 256;
+	temporaryDetails.maxCameraCount = 255;
 
 	return temporaryDetails;
 }
