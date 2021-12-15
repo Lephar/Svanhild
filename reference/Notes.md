@@ -63,6 +63,26 @@ detailed information, you can check [the full specifications](https://www.khrono
 Both screen tearing and input lag can cause motion sickness while using VR,
 therefore using mailbox is the best choice.
 
+### Swapchain on OculusVR
+
+Oculus API supports many backends such as DirectX, OpenGL and Vulkan. Even
+though not all of these APIs have the concept of swapchain, Oculus works with
+swapchains internally. There are several reasons for that choice:
+
+- Asyncronous Spacewarp: Explained in detail below, it is basically a frame
+prediction technology. If the GPU cannot meet the performance requirements,
+Oculus internally predicts and generates new frames in between using temporal
+data extracted from previous frames. For this system to work, it must have the
+required data with necessary details like the time delta and frame order.
+
+- Multiplatform nature: While oculus is a closed hardware, it has support for
+several backends as explained above, which all of them have a different
+architecture. In order to support all of these platforms it must have a uniform
+API. But the different architectures make this a problem. While OpenGL and older
+DirectX versions work as a state machine with framebuffers and buffer swaps,
+Vulkan and DirecX 12 works with swapchains and dispatchable command queues.
+
+
 ## Pipelines
 
 Older graphical APIs like OpenGL and DirectX support changing pipeline
@@ -106,6 +126,10 @@ visible ones.
 
 # Virtual Reality
 ## Motion Sickness
+
+Motion sickness is a body reaction to disparity between visual and physical
+observations made by the brain.
+
 ## Oculus Asyncronous Spacewarp
 
 Oculus has a technology named [Asyncronous Spacewarp](https://www.oculus.com/blog/introducing-asw-2-point-0-better-accuracy-lower-latency/)
@@ -126,16 +150,24 @@ though rendered images are a bit different from each other, they have a lot in
 common and could share most of the pipeline stages if given chance.
 
 This is where [Vulkan's Multiview Extension](https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_KHR_multiview.html)
-come in. It allows the creation of single pipeline with 2 different viewports so
-that 2 views share the same pipeline as much as possible. This has a slight
+comes in. It allows the creation of single pipeline with 2 different viewports
+so that 2 views share the same pipeline as much as possible. This has a slight
 performance benefit over 2 separate pipelines since it eliminates the need of
 pipeline switching while rendering. Also provides some constant referans values
 that are accessible in the shaders to make distinction between the views.
 
 # Portals
+
+Portals have many usage on computer graphics. The main use case is binding two
+distant points and teleporting any object
+
 ## Offscreen Rendering (Render to Texture)
 ## Stencil Buffer
 ## Oblique Frustum
+
+Portal rendering is done by translating camera to the target portal but keeping
+the same orientation and distance respect to the
+
 ## Recursion
 ## Cell-Portal Graphs
 ## Infinite Space Limitations
