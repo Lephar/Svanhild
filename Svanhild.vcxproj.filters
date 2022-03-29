@@ -890,6 +890,93 @@
     <ClInclude Include="headers\tinygltf\tiny_gltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Headers\librealsense2\rsutil.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\rs_advanced_mode.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\rs_advanced_mode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\rs.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\rs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_types.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_serializable_device.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_sensor.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_record_playback.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_processing.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_pipeline.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_options.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_internal.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_frame.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_export.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_device.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\hpp\rs_context.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_types.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_sensor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_record_playback.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_processing.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_pipeline.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_option.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_internal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_frame.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_device.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_context.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Headers\librealsense2\h\rs_advanced_mode_command.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include=".gitattributes" />
@@ -1313,11 +1400,382 @@
     <None Include="shaders\fragment.spv" />
     <None Include="shaders\vertex.spv" />
     <None Include="shaders\compute.comp" />
+    <None Include=".gitmodules" />
+    <None Include="Assets\.gitmodules" />
+    <None Include="Assets\backroom\camera.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\camera.gltf" />
+    <None Include="Assets\backroom\environment.blend" />
+    <None Include="Assets\backroom\portal12.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\portal12.gltf" />
+    <None Include="Assets\backroom\portal13.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\portal13.gltf" />
+    <None Include="Assets\backroom\portal14.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\portal14.gltf" />
+    <None Include="Assets\backroom\portal15.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\portal15.gltf" />
+    <None Include="Assets\backroom\portal26.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\portal26.gltf" />
+    <None Include="Assets\backroom\room1.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\room1.gltf" />
+    <None Include="Assets\backroom\room2.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\room2.gltf" />
+    <None Include="Assets\backroom\room3.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\room3.gltf" />
+    <None Include="Assets\backroom\room4.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\room4.gltf" />
+    <None Include="Assets\backroom\room5.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\room5.gltf" />
+    <None Include="Assets\backroom\room6.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\backroom\room6.gltf" />
+    <None Include="Assets\italy\Italy.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="Assets\italy\Italy.blend" />
+    <None Include="Assets\italy\Italy.gltf" />
+    <None Include="Libraries\realsense2.dll" />
+    <None Include="Reference\Notes.md" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="libraries\glfw3.lib" />
+    <Library Include="Libraries\realsense2.lib" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="reference\CMakeLists.txt" />
+    <Text Include="Reference\Benchmark.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="Assets\backroom\brick1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\brick2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\brick3.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\brick4.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\brick5.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\cobblestones1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\cobblestones2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\concrete1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\concrete2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\concrete3.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\concrete4.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\gravel1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\metal1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\pebbles1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\placeholder.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\rust1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\rust2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\wood1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\wood2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\wood3.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\wood4.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\wood5.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\backroom\wood6.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_0.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_3.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_4.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_5.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_6.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_7.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_8.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_9.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_10.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_11.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_12.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_13.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_14.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_15.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_16.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_17.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_18.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_19.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_20.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_21.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_22.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_23.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_24.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_25.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_26.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_27.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_28.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_29.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_30.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_31.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_32.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_33.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_34.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_35.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_36.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_37.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_38.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_39.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_40.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_41.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_42.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_43.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_44.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_45.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_46.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_47.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_48.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_49.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_50.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_51.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_52.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_53.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_54.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_55.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_56.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_57.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_58.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_59.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_60.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_61.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_62.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_63.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_64.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_65.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_66.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_67.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_68.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_69.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_70.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_71.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_72.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_73.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_74.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_75.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_76.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_77.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_78.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="Assets\italy\cs_italy_texture_79.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>
