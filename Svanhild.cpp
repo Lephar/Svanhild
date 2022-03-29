@@ -6,17 +6,17 @@ shaderc::Compiler shaderCompiler;
 shaderc::CompileOptions shaderOptions;
 //rs2::pipeline rsCamera;
 
-svh::Controls controls;
-svh::Details details;
-svh::State state;
-svh::Camera camera;
+Controls controls;
+Details details;
+State state;
+Camera camera;
 glm::mat4 projection;
 std::vector<uint16_t> indices;
-std::vector<svh::Vertex> vertices;
+std::vector<Vertex> vertices;
 std::vector<std::string> imageNames;
-std::vector<svh::Image> textures;
-std::vector<svh::Mesh> meshes;
-std::vector<svh::Portal> portals;
+std::vector<Image> textures;
+std::vector<Mesh> meshes;
+std::vector<Portal> portals;
 std::vector<glm::mat4> transforms;
 
 vk::Instance instance;
@@ -35,9 +35,9 @@ vk::ShaderModule computeShader, vertexShader, fragmentShader;
 vk::DescriptorSetLayout computeSetLayout, graphicsSetLayout;
 vk::PipelineLayout computePipelineLayout, graphicsPipelineLayout;
 vk::Pipeline computePipeline, graphicsPipeline, stencilPipeline, renderPipeline;
-std::vector <svh::Image> colorImages, depthImages;
+std::vector <Image> colorImages, depthImages;
 std::vector<vk::Framebuffer> framebuffers;
-svh::Buffer indexBuffer, vertexBuffer, uniformBuffer;
+Buffer indexBuffer, vertexBuffer, uniformBuffer;
 vk::DescriptorPool descriptorPool;
 
 uint8_t* deviceMemory;
@@ -45,7 +45,7 @@ uint8_t* deviceMemory;
 std::vector<vk::Queue> concurrentQueues;
 std::vector<vk::CommandPool> threadCommandPools;
 std::vector<vk::CommandBuffer> commandBuffers;
-std::vector<svh::Status> commandBufferStatuses;
+std::vector<Status> commandBufferStatuses;
 
 std::vector<std::thread> recordThreads, renderThreads;
 std::vector<vk::Fence> submitFences;
@@ -222,8 +222,8 @@ uint32_t selectQueueFamily() {
 }
 
 //TODO: Check format availability and generate mipmaps
-svh::Details generateDetails() {
-	svh::Details temporaryDetails;
+Details generateDetails() {
+	Details temporaryDetails;
 
 	temporaryDetails.meshCount = 0;
 	temporaryDetails.portalCount = 0;
@@ -538,7 +538,7 @@ glm::mat4 getNodeTransformation(const tinygltf::Node& node) {
 	return getNodeTranslation(node) * getNodeRotation(node) * getNodeScale(node);
 }
 
-void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation, uint32_t room) {
+void createCameraFromMatrix(Camera& camera, const glm::mat4& transformation, uint32_t room) {
 	camera.room = room;
 	camera.position = transformation * glm::vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
 	//camera.direction = transformation * glm::vec4{ 0.0f, -1.0f, 0.0f, 0.0f };
@@ -549,11 +549,11 @@ void createCameraFromMatrix(svh::Camera& camera, const glm::mat4& transformation
 
 //TODO: Use continuous memory for images
 void loadTexture(std::string name, uint32_t levels, vk::Format format) {
-	svh::Image image{};
-	svh::Buffer buffer{};
+	Image image{};
+	Buffer buffer{};
 
 	auto width = 0, height = 0, channel = 0;
-	auto pixels = stbi_load(("assets/" + name + ".jpg").c_str(), &width, &height, &channel, STBI_rgb_alpha);
+	auto pixels = stbi_load(("Assets/backroom/" + name + ".jpg").c_str(), &width, &height, &channel, STBI_rgb_alpha);
 	auto size = width * height * 4;
 
 	createBuffer(size, vk::BufferUsageFlagBits::eTransferSrc,
@@ -579,13 +579,13 @@ void loadTexture(std::string name, uint32_t levels, vk::Format format) {
 	textures.push_back(image);
 }
 
-void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, svh::Type type, uint32_t textureIndex,
+void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, Type type, uint32_t textureIndex,
 	const glm::mat4& translation, const glm::mat4& rotation, const glm::mat4& scale, uint8_t room) {
 	auto& primitive = meshData.primitives.front();
 	auto& indexReference = modelData.bufferViews.at(primitive.indices);
 	auto& indexData = modelData.buffers.at(indexReference.buffer);
 
-	svh::Mesh mesh{};
+	Mesh mesh{};
 
 	mesh.indexOffset = indices.size();
 	mesh.indexLength = indexReference.byteLength / sizeof(uint16_t);
@@ -624,7 +624,7 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 	mesh.textureIndex = textureIndex;
 
 	for (auto index = 0u; index < mesh.vertexLength; index++) {
-		svh::Vertex vertex{};
+		Vertex vertex{};
 		vertex.position = mesh.sourceTransform * glm::vec4{ positions.at(index), 1.0f };
 		vertex.normal = glm::normalize(glm::vec3{ mesh.sourceTransform * glm::vec4{ glm::normalize(normals.at(index)), 0.0f } });
 		vertex.texture = texcoords.at(index);
@@ -649,13 +649,13 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 	mesh.minBorders = min;
 	mesh.maxBorders = max;
 
-	if (type == svh::Type::Mesh) {
+	if (type == Type::Mesh) {
 		details.meshCount++;
 		meshes.push_back(mesh);
 	}
 
-	else if (type == svh::Type::Portal) {
-		svh::Portal portal{};
+	else if (type == Type::Portal) {
+		Portal portal{};
 
 		portal.mesh = mesh;
 		portal.direction = glm::normalize(glm::vec3(mesh.sourceTransform * glm::vec4{ -1.0f, 0.0f, 0.0f, 0.0f }));
@@ -665,11 +665,11 @@ void loadMesh(const tinygltf::Model& modelData, const tinygltf::Mesh& meshData, 
 	}
 }
 
-void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, uint8_t targetRoom = 0) {
+void loadModel(const std::string name, Type type, uint8_t sourceRoom = 0, uint8_t targetRoom = 0) {
 	std::string error, warning;
 	tinygltf::Model model;
 
-	auto result = objectLoader.LoadASCIIFromFile(&model, &error, &warning, "assets/" + name + ".gltf");
+	auto result = objectLoader.LoadASCIIFromFile(&model, &error, &warning, "assets/backroom/" + name + ".gltf");
 
 #ifndef NDEBUG
 	if (!warning.empty())
@@ -680,7 +680,7 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 		return;
 #endif
 
-	if (type == svh::Type::Camera)
+	if (type == Type::Camera)
 		createCameraFromMatrix(camera, getNodeTransformation(model.nodes.front()), sourceRoom);
 
 	else {
@@ -696,7 +696,7 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 			loadMesh(model, mesh, type, getTextureIndex(model, mesh), getNodeTranslation(node), getNodeRotation(node), getNodeScale(node), sourceRoom);
 		}
 
-		if (type == svh::Type::Portal) {
+		if (type == Type::Portal) {
 			auto& bluePortal = portals.at(portals.size() - 2);
 			auto& orangePortal = portals.at(portals.size() - 1);
 			auto portalRotation = glm::rotate(glm::radians(180.0f), glm::vec3{ 0.0f, 0.0f, 1.0f });
@@ -714,20 +714,20 @@ void loadModel(const std::string name, svh::Type type, uint8_t sourceRoom = 0, u
 }
 
 void createScene() {
-	loadModel("camera", svh::Type::Camera, 1);
+	loadModel("camera", Type::Camera, 1);
 	
-	loadModel("portal12", svh::Type::Portal, 1, 2);
-	loadModel("portal13", svh::Type::Portal, 1, 3);
-	loadModel("portal14", svh::Type::Portal, 1, 4);
-	loadModel("portal15", svh::Type::Portal, 1, 5);
-	loadModel("portal26", svh::Type::Portal, 2, 6);
+	loadModel("portal12", Type::Portal, 1, 2);
+	loadModel("portal13", Type::Portal, 1, 3);
+	loadModel("portal14", Type::Portal, 1, 4);
+	loadModel("portal15", Type::Portal, 1, 5);
+	loadModel("portal26", Type::Portal, 2, 6);
 
-	loadModel("room1", svh::Type::Mesh, 1);
-	loadModel("room2", svh::Type::Mesh, 2);
-	loadModel("room3", svh::Type::Mesh, 3);
-	loadModel("room4", svh::Type::Mesh, 4);
-	loadModel("room5", svh::Type::Mesh, 5);
-	loadModel("room6", svh::Type::Mesh, 6);
+	loadModel("room1", Type::Mesh, 1);
+	loadModel("room2", Type::Mesh, 2);
+	loadModel("room3", Type::Mesh, 3);
+	loadModel("room4", Type::Mesh, 4);
+	loadModel("room5", Type::Mesh, 5);
+	loadModel("room6", Type::Mesh, 6);
 }
 
 //TODO: Implement swapchain recreation on window resize
@@ -840,7 +840,7 @@ vk::ShaderModule loadShader(std::string name, shaderc_shader_kind kind) {
 	else if (kind == shaderc_glsl_fragment_shader)
 		extension = ".frag";
 
-	auto path = std::filesystem::current_path() / "shaders" / (name + extension);
+	auto path = std::filesystem::current_path() / "Shaders" / (name + extension);
 	auto size = std::filesystem::file_size(path);
 
 	std::ifstream file(path);
@@ -985,26 +985,26 @@ void createPipelines() {
 
 	vk::VertexInputBindingDescription bindingDescription{};
 	bindingDescription.binding = 0;
-	bindingDescription.stride = sizeof(svh::Vertex);
+	bindingDescription.stride = sizeof(Vertex);
 	bindingDescription.inputRate = vk::VertexInputRate::eVertex;
 
 	vk::VertexInputAttributeDescription positionDescription{};
 	positionDescription.binding = 0;
 	positionDescription.location = 0;
 	positionDescription.format = vk::Format::eR32G32B32Sfloat;
-	positionDescription.offset = offsetof(svh::Vertex, position);
+	positionDescription.offset = offsetof(Vertex, position);
 
 	vk::VertexInputAttributeDescription normalDescription{};
 	normalDescription.binding = 0;
 	normalDescription.location = 1;
 	normalDescription.format = vk::Format::eR32G32B32Sfloat;
-	normalDescription.offset = offsetof(svh::Vertex, normal);
+	normalDescription.offset = offsetof(Vertex, normal);
 
 	vk::VertexInputAttributeDescription textureDescription{};
 	textureDescription.binding = 0;
 	textureDescription.location = 2;
 	textureDescription.format = vk::Format::eR32G32Sfloat;
-	textureDescription.offset = offsetof(svh::Vertex, texture);
+	textureDescription.offset = offsetof(Vertex, texture);
 
 	std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions{ positionDescription, normalDescription, textureDescription };
 
@@ -1157,7 +1157,7 @@ void createFramebuffers() {
 	depthImages.reserve(details.imageCount);
 
 	for (auto& swapchainView : swapchainViews) {
-		svh::Image colorImage, depthImage;
+		Image colorImage, depthImage;
 
 		createImage(details.swapchainExtent.width, details.swapchainExtent.height, 1, details.sampleCount,
 			details.surfaceFormat.format, vk::ImageTiling::eOptimal,
@@ -1187,7 +1187,7 @@ void createFramebuffers() {
 }
 
 void createElementBuffers() {
-	svh::Buffer stagingBuffer{};
+	Buffer stagingBuffer{};
 
 	auto indexSize = indices.size() * sizeof(uint16_t);
 	createBuffer(indexSize, vk::BufferUsageFlagBits::eTransferSrc,
@@ -1205,7 +1205,7 @@ void createElementBuffers() {
 	device.destroyBuffer(stagingBuffer.buffer);
 	device.freeMemory(stagingBuffer.memory);
 
-	auto vertexSize = vertices.size() * sizeof(svh::Vertex);
+	auto vertexSize = vertices.size() * sizeof(Vertex);
 	createBuffer(vertexSize, vk::BufferUsageFlagBits::eTransferSrc,
 		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
 		stagingBuffer.buffer, stagingBuffer.memory);
@@ -1325,7 +1325,7 @@ void createCommandBuffers() {
 	}
 
 	for (auto statusIndex = 0u; statusIndex < commandBufferCount; statusIndex++)
-		commandBufferStatuses.push_back(svh::Status::NotRecorded);
+		commandBufferStatuses.push_back(Status::NotRecorded);
 }
 
 void createSyncObjects() {
@@ -1490,8 +1490,8 @@ uint32_t getCommandBufferIndex(uint32_t imageIndex) {
 	for (auto index = offset; index < offset + details.commandBufferPerImage; index++) {
 		auto& status = commandBufferStatuses.at(index);
 
-		if (status == svh::Status::Ready || status == svh::Status::Used) {
-			status = svh::Status::InUse;
+		if (status == Status::Ready || status == Status::Used) {
+			status = Status::InUse;
 			commandBufferMutex->unlock();
 			return index;
 		}
@@ -1507,7 +1507,7 @@ void recordCommands(uint32_t imageIndex) {
 
 	updateCommandBuffer(imageIndex, 0);
 
-	commandBufferStatuses.at(commandBufferOffset) = svh::Status::Ready;
+	commandBufferStatuses.at(commandBufferOffset) = Status::Ready;
 	auto previousIndex = std::numeric_limits<uint32_t>::max(), currentIndex = commandBufferOffset;
 
 	if (++state.recordingCount == details.imageCount)
@@ -1529,11 +1529,11 @@ void recordCommands(uint32_t imageIndex) {
 
 			auto& status = commandBufferStatuses.at(index);
 
-			if (status == svh::Status::NotRecorded)
+			if (status == Status::NotRecorded)
 				notRecorded = index;
-			if (status == svh::Status::Invalidated)
+			if (status == Status::Invalidated)
 				invalidated = index;
-			if (status == svh::Status::Used)
+			if (status == Status::Used)
 				used = index;
 		}
 
@@ -1544,7 +1544,7 @@ void recordCommands(uint32_t imageIndex) {
 		else if (used != std::numeric_limits<uint32_t>::max())
 			currentIndex = used;
 
-		commandBufferStatuses.at(currentIndex) = svh::Status::Recording;
+		commandBufferStatuses.at(currentIndex) = Status::Recording;
 		swapchainMutex->unlock();
 
 		auto queueIndex = currentIndex - commandBufferOffset;
@@ -1554,10 +1554,10 @@ void recordCommands(uint32_t imageIndex) {
 		swapchainMutex->lock();
 
 		for(auto index = commandBufferOffset; index < commandBufferOffset + details.commandBufferPerImage; index++)
-			if(commandBufferStatuses.at(index) == svh::Status::Ready || commandBufferStatuses.at(index) == svh::Status::Used)
-				commandBufferStatuses.at(index) = svh::Status::Invalidated;
+			if(commandBufferStatuses.at(index) == Status::Ready || commandBufferStatuses.at(index) == Status::Used)
+				commandBufferStatuses.at(index) = Status::Invalidated;
 
-		commandBufferStatuses.at(currentIndex) = svh::Status::Ready;
+		commandBufferStatuses.at(currentIndex) = Status::Ready;
 
 		swapchainMutex->unlock();
 	}
@@ -1595,7 +1595,7 @@ void renderImage(uint32_t threadIndex) {
 
 		if (imageIndex != std::numeric_limits<uint32_t>::max()) {
 			swapchainMutexes.at(imageIndex)->lock();
-			commandBufferStatuses.at(commandBufferIndex) = svh::Status::Used;
+			commandBufferStatuses.at(commandBufferIndex) = Status::Used;
 			swapchainMutexes.at(imageIndex)->unlock();
 			swapchainSemaphores.at(imageIndex)->release();
 		}
@@ -1626,7 +1626,7 @@ float map(float value, float sMin, float sMax, float tMin, float tMax) {
 	return tMin + (tMax - tMin) * (value - sMin) / (sMax - sMin);
 }
 
-bool visible(svh::Portal& portal, svh::Camera& rawCamera, glm::mat4& processedCamera) {
+bool visible(Portal& portal, Camera& rawCamera, glm::mat4& processedCamera) {
 	if (portal.mesh.sourceRoom == rawCamera.room)
 		return true;
 	else
@@ -1638,7 +1638,7 @@ void generateCameras() {
 
 	transforms.clear();
 
-	std::queue<svh::Camera> rawCameraQueue;
+	std::queue<Camera> rawCameraQueue;
 	std::queue<glm::mat4> processedCameraQueue;
 
 	auto mainCamera = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
@@ -1757,7 +1757,7 @@ void gameTick() {
 	auto coefficient = 0.0f, distance = glm::length(replacement);
 
 	for (auto& portal : portals) {
-		if (svh::epsilon < distance && glm::intersectRayPlane(camera.previous, direction, portal.mesh.origin, portal.direction, coefficient)) {
+		if (epsilon < distance && glm::intersectRayPlane(camera.previous, direction, portal.mesh.origin, portal.direction, coefficient)) {
 			auto point = camera.previous + coefficient * direction;
 
 			if (point.x >= portal.mesh.minBorders.x && point.y >= portal.mesh.minBorders.y && point.z >= portal.mesh.minBorders.z &&

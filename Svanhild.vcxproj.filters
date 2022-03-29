@@ -18,9 +18,6 @@
     <ClCompile Include="Svanhild.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="headers\glm\detail\glm.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Svanhild.hpp">

@@ -39,125 +39,123 @@
 #include <GLFW/glfw3.h>
 #include <librealsense2/rs.hpp>
 
-namespace svh {
-	constexpr auto epsilon = 0.0009765625f;
+constexpr auto epsilon = 0.0009765625f;
 
-	enum class Type {
-		Mesh,
-		Portal,
-		Camera
-	};
+enum class Type {
+	Mesh,
+	Portal,
+	Camera
+};
 	
-	enum class Status {
-		NotRecorded,
-		Recording,
-		Invalidated,
-		Ready,
-		Used,
-		InUse
-	};
+enum class Status {
+	NotRecorded,
+	Recording,
+	Invalidated,
+	Ready,
+	Used,
+	InUse
+};
 
-	struct Controls {
-		bool keyW;
-		bool keyA;
-		bool keyS;
-		bool keyD;
+struct Controls {
+	bool keyW;
+	bool keyA;
+	bool keyS;
+	bool keyD;
 
-		double_t mouseX;
-		double_t mouseY;
-		double_t deltaX;
-		double_t deltaY;
-	};
+	double_t mouseX;
+	double_t mouseY;
+	double_t deltaX;
+	double_t deltaY;
+};
 
-	struct Details {
-		uint32_t imageCount;
-		uint32_t minImageCount;
-		uint32_t maxImageCount;
-		uint32_t concurrentImageCount;
-		uint32_t commandBufferPerImage;
-		uint32_t queueCount;
-		uint32_t portalCount;
-		uint32_t meshCount;
-		uint32_t maxCameraCount;
-		uint32_t uniformAlignment;
-		uint32_t uniformQueueStride;
-		uint32_t uniformFrameStride;
-		uint32_t uniformSize;
-		vk::Extent2D swapchainExtent;
-		vk::SurfaceTransformFlagBitsKHR swapchainTransform;
-		vk::Format depthStencilFormat;
-		vk::SurfaceFormatKHR surfaceFormat;
-		vk::PresentModeKHR presentMode;
-		vk::Format imageFormat;
-		vk::SampleCountFlagBits sampleCount;
-		uint32_t mipLevels;
-		float_t maxAnisotropy;
-	};
+struct Details {
+	uint32_t imageCount;
+	uint32_t minImageCount;
+	uint32_t maxImageCount;
+	uint32_t concurrentImageCount;
+	uint32_t commandBufferPerImage;
+	uint32_t queueCount;
+	uint32_t portalCount;
+	uint32_t meshCount;
+	uint32_t maxCameraCount;
+	uint32_t uniformAlignment;
+	uint32_t uniformQueueStride;
+	uint32_t uniformFrameStride;
+	uint32_t uniformSize;
+	vk::Extent2D swapchainExtent;
+	vk::SurfaceTransformFlagBitsKHR swapchainTransform;
+	vk::Format depthStencilFormat;
+	vk::SurfaceFormatKHR surfaceFormat;
+	vk::PresentModeKHR presentMode;
+	vk::Format imageFormat;
+	vk::SampleCountFlagBits sampleCount;
+	uint32_t mipLevels;
+	float_t maxAnisotropy;
+};
 
-	struct State {
-		uint32_t currentImage;
-		uint32_t totalFrameCount;
-		std::atomic<uint32_t> frameCount;
-		std::atomic<uint32_t> recordingCount;
-		std::atomic<bool> threadsActive;
-		double_t timeDelta;
-		double_t checkPoint;
-		std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
-		std::chrono::time_point<std::chrono::high_resolution_clock> currentTime;
-	};
+struct State {
+	uint32_t currentImage;
+	uint32_t totalFrameCount;
+	std::atomic<uint32_t> frameCount;
+	std::atomic<uint32_t> recordingCount;
+	std::atomic<bool> threadsActive;
+	double_t timeDelta;
+	double_t checkPoint;
+	std::chrono::time_point<std::chrono::high_resolution_clock> previousTime;
+	std::chrono::time_point<std::chrono::high_resolution_clock> currentTime;
+};
 
-	struct Vertex {
-		glm::vec3 position;
-		glm::vec3 normal;
-		glm::vec2 texture;
-	};
+struct Vertex {
+	glm::vec3 position;
+	glm::vec3 normal;
+	glm::vec2 texture;
+};
 
-	struct Camera {
-		uint32_t room;
+struct Camera {
+	uint32_t room;
 
-		glm::vec3 position;
-		glm::vec3 direction;
-		glm::vec3 up;
+	glm::vec3 position;
+	glm::vec3 direction;
+	glm::vec3 up;
 
-		glm::vec3 previous;
-	};
+	glm::vec3 previous;
+};
 
-	struct Buffer {
-		vk::Buffer buffer;
-		vk::DeviceMemory memory;
-	};
+struct Buffer {
+	vk::Buffer buffer;
+	vk::DeviceMemory memory;
+};
 
-	struct Image {
-		vk::Image image;
-		vk::ImageView view;
-		vk::DeviceMemory memory;
-		vk::DescriptorSet descriptor;
-	};
+struct Image {
+	vk::Image image;
+	vk::ImageView view;
+	vk::DeviceMemory memory;
+	vk::DescriptorSet descriptor;
+};
 
-	struct Mesh {
-		uint32_t indexOffset;
-		uint32_t indexLength;
-		uint32_t vertexOffset;
-		uint32_t vertexLength;
+struct Mesh {
+	uint32_t indexOffset;
+	uint32_t indexLength;
+	uint32_t vertexOffset;
+	uint32_t vertexLength;
 
-		uint32_t textureIndex;
-		std::string textureName;
+	uint32_t textureIndex;
+	std::string textureName;
 
-		glm::vec3 origin;
-		glm::vec3 minBorders;
-		glm::vec3 maxBorders;
+	glm::vec3 origin;
+	glm::vec3 minBorders;
+	glm::vec3 maxBorders;
 
-		uint8_t sourceRoom;
-		glm::mat4 sourceTransform;
-	};
+	uint8_t sourceRoom;
+	glm::mat4 sourceTransform;
+};
 
-	struct Portal {
-		Mesh mesh;
-		uint8_t pairIndex;
-		uint8_t targetRoom;
+struct Portal {
+	Mesh mesh;
+	uint8_t pairIndex;
+	uint8_t targetRoom;
 
-		glm::vec3 direction;
-		glm::mat4 targetTransform;
-		glm::mat4 cameraTransform;
-	};
-}
+	glm::vec3 direction;
+	glm::mat4 targetTransform;
+	glm::mat4 cameraTransform;
+};
