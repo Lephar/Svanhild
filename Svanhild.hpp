@@ -146,8 +146,8 @@ struct Mesh {
 	glm::vec3 minBorders;
 	glm::vec3 maxBorders;
 
-	uint8_t sourceRoom;
-	glm::mat4 sourceTransform;
+	uint8_t room;
+	glm::mat4 transform;
 };
 
 struct Portal {
@@ -156,6 +156,14 @@ struct Portal {
 	uint8_t targetRoom;
 
 	glm::vec3 direction;
-	glm::mat4 targetTransform;
 	glm::mat4 cameraTransform;
+};
+
+struct Node {
+	uint32_t layer;
+	int32_t parentIndex;
+	int32_t portalIndex;
+
+	Camera camera;
+	glm::mat4 transform;
 };
