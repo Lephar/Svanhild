@@ -1236,11 +1236,8 @@ void createElementBuffers() {
 	device.freeMemory(stagingBuffer.memory);
 
 	details.uniformQueueStride = details.maxCameraCount * details.uniformAlignment;
-	std::cout << details.uniformQueueStride << std::endl;
 	details.uniformFrameStride = details.commandBufferPerImage * details.uniformQueueStride;
-	std::cout << details.uniformFrameStride << std::endl;
 	details.uniformSize = details.imageCount * details.uniformFrameStride;
-	std::cout << details.uniformSize << std::endl;
 
 	createBuffer(details.uniformSize, vk::BufferUsageFlagBits::eUniformBuffer,
 		vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
@@ -1382,66 +1379,11 @@ void setup() {
 	createSyncObjects();
 }
 
-bool visible(Portal& portal, Node& node) {
-	if (portal.mesh.room == node.camera.room && portal.pairIndex != node.portalIndex)
-		return true;
-	else
-		return false;
-}
-
-void generateNodes() {
-	nodes.clear();
-
-	std::queue<Node> queue;
-
-	auto transform = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
-
-	Node mainNode{ 0, -1, -1, camera, transform };
-
-	queue.push(mainNode);
-	nodes.push_back(mainNode);
-
-	while (nodes.size() != details.maxCameraCount && !queue.empty()) {
-		int32_t parentIndex = nodes.size() - queue.size();
-
-		auto parentNode = queue.front();
-		queue.pop();
-
-		for (int32_t i = 0; i < portals.size(); i++) {
-			auto& portal = portals.at(i);
-
-			if (visible(portal, parentNode)) {
-				Camera portalCamera{
-					portal.targetRoom,
-					portal.cameraTransform * glm::vec4{ parentNode.camera.position, 1.0f },
-					portal.cameraTransform * glm::vec4{ parentNode.camera.direction, 0.0f },
-					parentNode.camera.up,
-					parentNode.camera.previous
-				};
-
-				auto portalProjection = projection;
-				//auto portalProjection = cullOblique(portal);
-
-				auto portalTransform = portalProjection * glm::lookAt(portalCamera.position,
-					portalCamera.position + portalCamera.direction, portalCamera.up);
-
-				Node portalNode{ parentNode.layer + 1, parentIndex, i, portalCamera, portalTransform };
-
-				queue.push(portalNode);
-				nodes.push_back(portalNode);
-
-				if (nodes.size() == details.maxCameraCount)
-					break;
-			}
-		}
-	}
-}
-
 //TODO: Remove constant memory map-unmaps
 void updateUniformBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	auto uniformOffset = imageIndex * details.uniformFrameStride + queueIndex * details.uniformQueueStride;
 
-	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
+	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
 
 	for (auto nodeIndex = 0u; nodeIndex < nodes.size(); nodeIndex++)
 		std::memcpy(deviceMemory + uniformOffset + nodeIndex * details.uniformAlignment, &nodes.at(nodeIndex).transform, sizeof(glm::mat4));
@@ -1504,7 +1446,9 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
-	auto uniformLocation = uniformOffset + details.portalCount * details.uniformAlignment;
+	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
+
+	auto uniformLocation = uniformOffset;
 
 	for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
 		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
@@ -1513,7 +1457,7 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 			if(mesh.textureIndex == textureIndex)
 				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 	}
-
+	/*
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, stencilPipeline);
 
@@ -1542,7 +1486,7 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 					commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
 	}
-
+	*/
 	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	commandBuffer.endRenderPass();
 	commandBuffer.end();
@@ -1693,73 +1637,59 @@ float map(float value, float sMin, float sMax, float tMin, float tMax) {
 	return tMin + (tMax - tMin) * (value - sMin) / (sMax - sMin);
 }
 
-bool visible(Portal& portal, Camera& rawCamera, glm::mat4& processedCamera) {
-	if (portal.mesh.room == rawCamera.room)
+bool visible(Portal& portal, Node& node) {
+	if (portal.mesh.room == node.camera.room && portal.pairIndex != node.portalIndex)
 		return true;
 	else
 		return false;
 }
 
-void generateCameras() {
-	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
+void generateNodes() {
+	nodes.clear();
 
-	transforms.clear();
+	std::queue<Node> queue;
 
-	std::queue<Camera> rawCameraQueue;
-	std::queue<glm::mat4> processedCameraQueue;
+	auto transform = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
 
-	auto mainCamera = projection * glm::lookAt(camera.position, camera.position + camera.direction, camera.up);
-	
-	rawCameraQueue.push(camera);
-	processedCameraQueue.push(mainCamera);
+	Node mainNode{ 0, -1, -1, camera, transform };
 
-	while (transforms.size() != details.maxCameraCount - 1 && !rawCameraQueue.empty() && !processedCameraQueue.empty()) {
-		auto rawCamera = rawCameraQueue.front();
-		auto processedCamera = processedCameraQueue.front();
+	queue.push(mainNode);
+	nodes.push_back(mainNode);
 
-		rawCameraQueue.pop();
-		processedCameraQueue.pop();
+	while (nodes.size() != details.maxCameraCount && !queue.empty()) {
+		int32_t parentIndex = nodes.size() - queue.size();
 
-		for (auto& portal : portals) {
-			if (visible(portal, rawCamera, processedCamera)) {
-				auto portalCamera = rawCamera;
+		auto parentNode = queue.front();
+		queue.pop();
 
-				portalCamera.room = portal.targetRoom;
-				portalCamera.position = portal.cameraTransform * glm::vec4{ portalCamera.position, 1.0f };
-				portalCamera.direction = portal.cameraTransform * glm::vec4{ portalCamera.direction, 0.0f };
+		for (int32_t i = 0; i < portals.size(); i++) {
+			auto& portal = portals.at(i);
 
-				auto portalTransform = projection * glm::lookAt(portalCamera.position, portalCamera.position + portalCamera.direction, portalCamera.up);
-				
-				/*auto plane = glm::vec4{portal.direction, glm::dot(-portal.direction, portal.mesh.origin)};
+			if (visible(portal, parentNode)) {
+				Camera portalCamera{
+					portal.targetRoom,
+					portal.cameraTransform * glm::vec4{ parentNode.camera.position, 1.0f },
+					portal.cameraTransform * glm::vec4{ parentNode.camera.direction, 0.0f },
+					parentNode.camera.up,
+					parentNode.camera.previous
+				};
 
-				glm::vec4 quaternion{};
-				quaternion.x = ((0.0f < plane.x) - (plane.x < 0.0f) + portalProjection[2][0]) / portalProjection[0][0];
-				quaternion.y = ((0.0f < plane.y) - (plane.y < 0.0f) + portalProjection[2][1]) / portalProjection[1][1];
-				quaternion.z = 1.0f;
-				quaternion.w = portalProjection[2][2] / portalProjection[3][2];
+				auto portalProjection = projection;
+				//auto portalProjection = cullOblique(portal);
 
-				auto clip = plane * (1.0f / glm::dot(plane, quaternion));
+				auto portalTransform = portalProjection * glm::lookAt(portalCamera.position,
+					portalCamera.position + portalCamera.direction, portalCamera.up);
 
-				portalProjection[0][2] = clip.x;
-				portalProjection[1][2] = clip.y;
-				portalProjection[2][2] = clip.z;
-				portalProjection[3][2] = clip.w;
-				*/
+				Node portalNode{ parentNode.layer + 1, parentIndex, i, portalCamera, portalTransform };
 
-				rawCameraQueue.push(portalCamera);
-				processedCameraQueue.push(portalTransform);
-				transforms.push_back(portalTransform);
+				queue.push(portalNode);
+				nodes.push_back(portalNode);
 
-				if (transforms.size() == details.maxCameraCount - 1)
+				if (nodes.size() == details.maxCameraCount)
 					break;
 			}
 		}
-
-		std::cout << "-------------------------------------" << std::endl;
 	}
-
-	transforms.push_back(mainCamera);
-	std::cout << "**********************************************************\t" << transforms.size() << std::endl;
 }
 
 void gameTick() {
@@ -1846,7 +1776,7 @@ void gameTick() {
 	controls.deltaX = 0.0f;
 	controls.deltaY = 0.0f;
 
-	generateCameras();
+	generateNodes();
 }
 
 //TODO: Split present and retrieve
