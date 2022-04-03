@@ -1115,6 +1115,18 @@ void createPipelines() {
 	viewportInfo.scissorCount = 1;
 	viewportInfo.pScissors = &scissor;
 
+	std::array<vk::DynamicState, 5> dynamicStates = {
+		vk::DynamicState::eStencilTestEnable,
+		vk::DynamicState::eStencilOp,
+		vk::DynamicState::eStencilCompareMask,
+		vk::DynamicState::eStencilReference,
+		vk::DynamicState::eStencilWriteMask
+	};
+
+	vk::PipelineDynamicStateCreateInfo dynamicInfo{};
+	dynamicInfo.dynamicStateCount = dynamicStates.size();
+	dynamicInfo.pDynamicStates = dynamicStates.data();
+
 	vk::ComputePipelineCreateInfo computePipelineInfo{};
 	computePipelineInfo.basePipelineIndex = -1;
 	computePipelineInfo.basePipelineHandle = nullptr;
@@ -1133,7 +1145,7 @@ void createPipelines() {
 	graphicsPipelineInfo.pDepthStencilState = &depthStencil;
 	graphicsPipelineInfo.pColorBlendState = &blendInfo;
 	graphicsPipelineInfo.pViewportState = &viewportInfo;
-	graphicsPipelineInfo.pDynamicState = nullptr;
+	graphicsPipelineInfo.pDynamicState = &dynamicInfo;
 	graphicsPipelineInfo.layout = graphicsPipelineLayout;
 	graphicsPipelineInfo.renderPass = renderPass;
 	graphicsPipelineInfo.subpass = 0;
@@ -1142,14 +1154,7 @@ void createPipelines() {
 
 	graphicsPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
 
-	std::array<vk::DynamicState, 1> dynamicStates = { vk::DynamicState::eStencilReference };
-
-	vk::PipelineDynamicStateCreateInfo dynamicInfo{};
-	dynamicInfo.dynamicStateCount = dynamicStates.size();
-	dynamicInfo.pDynamicStates = dynamicStates.data();
-
-	graphicsPipelineInfo.pDynamicState = &dynamicInfo;
-
+	/*
 	depthStencil.stencilTestEnable = true;
 	stencilOpState.passOp = vk::StencilOp::eReplace;
 	stencilOpState.compareOp = vk::CompareOp::eAlways;
@@ -1164,6 +1169,7 @@ void createPipelines() {
 	stencilOpState.reference = 0;
 	depthStencil.front = stencilOpState;
 	renderPipeline = device.createGraphicsPipeline(nullptr, graphicsPipelineInfo).value;
+	*/
 }
 
 void createFramebuffers() {
@@ -1383,7 +1389,7 @@ void setup() {
 void updateUniformBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	auto uniformOffset = imageIndex * details.uniformFrameStride + queueIndex * details.uniformQueueStride;
 
-	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
+	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
 
 	for (auto nodeIndex = 0u; nodeIndex < nodes.size(); nodeIndex++)
 		std::memcpy(deviceMemory + uniformOffset + nodeIndex * details.uniformAlignment, &nodes.at(nodeIndex).transform, sizeof(glm::mat4));
@@ -1447,16 +1453,20 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
+	
+	for (auto nodeIndex = 0u; nodeIndex < nodes.size(); nodeIndex++) {
+		auto uniformLocation = uniformOffset + details.uniformAlignment * nodeIndex;
 
-	auto uniformLocation = uniformOffset;
+		for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
 
-	for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
-		
-		for (auto& mesh : meshes)
-			if(mesh.textureIndex == textureIndex)
-				commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+			for (auto& mesh : meshes)
+				if (mesh.textureIndex == textureIndex)
+					commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+		}
 	}
+
+	
 	/*
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, stencilPipeline);
@@ -1645,6 +1655,8 @@ bool visible(Portal& portal, Node& node) {
 }
 
 void generateNodes() {
+	std::unique_lock<std::shared_mutex> writeLock{ uniformMutex };
+
 	nodes.clear();
 
 	std::queue<Node> queue;
@@ -1698,7 +1710,7 @@ void gameTick() {
 	state.timeDelta = std::chrono::duration<double_t, std::chrono::seconds::period>(state.currentTime - state.previousTime).count();
 	state.checkPoint += state.timeDelta;
 	
-	auto moveDelta = state.timeDelta * 6.0, turnDelta = state.timeDelta * glm::radians(30.0);
+	auto moveDelta = state.timeDelta * 6.0, turnDelta = glm::radians(0.4);
 	auto vectorCount = std::abs(controls.keyW - controls.keyS) + std::abs(controls.keyD - controls.keyA);
 
 	if (vectorCount > 0)
