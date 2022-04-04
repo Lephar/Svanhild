@@ -36,7 +36,7 @@ vk::RenderPass renderPass;
 vk::ShaderModule computeShader, vertexShader, fragmentShader;
 vk::DescriptorSetLayout computeSetLayout, graphicsSetLayout;
 vk::PipelineLayout computePipelineLayout, graphicsPipelineLayout;
-vk::Pipeline computePipeline, graphicsPipeline, stencilPipeline, renderPipeline;
+vk::Pipeline computePipeline, graphicsPipeline;
 std::vector <Image> colorImages, depthImages;
 std::vector<vk::Framebuffer> framebuffers;
 Buffer indexBuffer, vertexBuffer, uniformBuffer;
@@ -156,7 +156,7 @@ void initializeCore() {
 	applicationInfo.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
 	applicationInfo.pEngineName = "Svanhild Engine";
 	applicationInfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-	applicationInfo.apiVersion = VK_API_VERSION_1_2;
+	applicationInfo.apiVersion = VK_API_VERSION_1_3;
 
 	vk::InstanceCreateInfo instanceInfo{};
 	instanceInfo.pApplicationInfo = &applicationInfo;
@@ -786,7 +786,7 @@ void createRenderPass() {
 	vk::AttachmentDescription depthAttachment{};
 	depthAttachment.format = details.depthStencilFormat;
 	depthAttachment.samples = details.sampleCount;
-	depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+	depthAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
 	depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
 	depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
 	depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
@@ -1056,7 +1056,7 @@ void createPipelines() {
 	stencilOpState.failOp = vk::StencilOp::eKeep;
 	stencilOpState.passOp = vk::StencilOp::eKeep;
 	stencilOpState.depthFailOp = vk::StencilOp::eKeep;
-	stencilOpState.compareOp = vk::CompareOp::eNever;
+	stencilOpState.compareOp = vk::CompareOp::eAlways;
 	stencilOpState.compareMask = 0xFF;
 	stencilOpState.writeMask = 0xFF;
 
@@ -1067,9 +1067,9 @@ void createPipelines() {
 	depthStencil.depthBoundsTestEnable = false;
 	depthStencil.minDepthBounds = 0.0f;
 	depthStencil.maxDepthBounds = 1.0f;
-	depthStencil.stencilTestEnable = false;
+	depthStencil.stencilTestEnable = true;
 	depthStencil.front = stencilOpState;
-	depthStencil.back = stencilOpState;
+	depthStencil.back = vk::StencilOpState{};
 
 	vk::PipelineColorBlendAttachmentState blendAttachment{};
 	blendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
@@ -1411,8 +1411,6 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	depthStencilClear.depthStencil.depth = 1.0f;
 	depthStencilClear.depthStencil.stencil = 0;
 
-	std::array<vk::ClearValue, 2> clearValues{ colorClear, depthStencilClear };
-
 	vk::Offset2D areaOffset{};
 	areaOffset.x = 0;
 	areaOffset.y = 0;
@@ -1443,8 +1441,8 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	renderPassInfo.renderPass = renderPass;
 	renderPassInfo.framebuffer = framebuffers.at(imageIndex);
 	renderPassInfo.renderArea = area;
-	renderPassInfo.clearValueCount = clearValues.size();
-	renderPassInfo.pClearValues = clearValues.data();
+	renderPassInfo.clearValueCount = 1;
+	renderPassInfo.pClearValues = &colorClear;
 	
 	commandBuffer.begin(beginInfo);
 	commandBuffer.bindIndexBuffer(indexBuffer.buffer, 0, vk::IndexType::eUint16);
@@ -1453,9 +1451,35 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
 	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
+
+	commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0xFF);
+	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	
-	for (auto nodeIndex = 0u; nodeIndex < nodes.size(); nodeIndex++) {
+	for (uint8_t nodeIndex = 0; nodeIndex < nodes.size(); nodeIndex++) {
+		auto& node = nodes.at(nodeIndex);
+		uint8_t mod = node.layer % 2;
+		
 		auto uniformLocation = uniformOffset + details.uniformAlignment * nodeIndex;
+
+		commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
+
+		commandBuffer.setStencilOp(vk::StencilFaceFlagBits::eFront, vk::StencilOp::eKeep,
+			vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eAlways);
+
+		if(!mod) {
+			uint8_t value = nodeIndex;
+
+			commandBuffer.setStencilReference(vk::StencilFaceFlagBits::eFront, value);
+			commandBuffer.setStencilCompareMask(vk::StencilFaceFlagBits::eFront, 0x0F);
+			commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0xF0);
+		}
+		else {
+			uint8_t value = nodeIndex << 4;
+
+			commandBuffer.setStencilReference(vk::StencilFaceFlagBits::eFront, value);
+			commandBuffer.setStencilCompareMask(vk::StencilFaceFlagBits::eFront, 0xF0);
+			commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0x0F);
+		}
 
 		for (auto textureIndex = 1u; textureIndex < textures.size(); textureIndex++) {
 			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.at(textureIndex).descriptor, 1, &uniformLocation);
@@ -1464,9 +1488,38 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 				if (mesh.textureIndex == textureIndex)
 					commandBuffer.drawIndexed(mesh.indexLength, 1, mesh.indexOffset, mesh.vertexOffset, 0);
 		}
+
+		commandBuffer.setStencilOp(vk::StencilFaceFlagBits::eFront, vk::StencilOp::eKeep,
+			vk::StencilOp::eKeep, vk::StencilOp::eReplace, vk::CompareOp::eEqual);
+
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
+
+		for (uint8_t childIndex = nodeIndex + 1; childIndex < nodes.size(); childIndex++) {
+			auto& childNode = nodes.at(childIndex);
+
+			if (nodeIndex == childNode.parentIndex) {
+				if (!mod) {
+					uint8_t value = (childIndex << 4) + nodeIndex;
+
+					commandBuffer.setStencilReference(vk::StencilFaceFlagBits::eFront, value);
+					commandBuffer.setStencilCompareMask(vk::StencilFaceFlagBits::eFront, 0x0F);
+					commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0xF0);
+				}
+				else {
+					uint8_t value = (nodeIndex << 4) + childIndex;
+
+					commandBuffer.setStencilReference(vk::StencilFaceFlagBits::eFront, value);
+					commandBuffer.setStencilCompareMask(vk::StencilFaceFlagBits::eFront, 0xF0);
+					commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0x0F);
+				}
+
+				auto& portalMesh = portals.at(childNode.portalIndex).mesh;
+				commandBuffer.drawIndexed(portalMesh.indexLength, 1, portalMesh.indexOffset,
+					portalMesh.vertexOffset, 0);
+			}
+		}
 	}
 
-	
 	/*
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, stencilPipeline);
@@ -1497,7 +1550,6 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 		}
 	}
 	*/
-	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	commandBuffer.endRenderPass();
 	commandBuffer.end();
 }
@@ -1874,8 +1926,6 @@ void clear() {
 		device.destroyImage(texture.image);
 		device.freeMemory(texture.memory);
 	}
-	device.destroyPipeline(renderPipeline);
-	device.destroyPipeline(stencilPipeline);
 	device.destroyPipeline(graphicsPipeline);
 	device.destroyPipeline(computePipeline);
 	device.destroyPipelineLayout(graphicsPipelineLayout);
