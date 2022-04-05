@@ -1056,7 +1056,7 @@ void createPipelines() {
 	stencilOpState.failOp = vk::StencilOp::eKeep;
 	stencilOpState.passOp = vk::StencilOp::eKeep;
 	stencilOpState.depthFailOp = vk::StencilOp::eKeep;
-	stencilOpState.compareOp = vk::CompareOp::eAlways;
+	stencilOpState.compareOp = vk::CompareOp::eEqual;
 	stencilOpState.compareMask = 0xFF;
 	stencilOpState.writeMask = 0xFF;
 
@@ -1452,6 +1452,7 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 
 	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
 
+	commandBuffer.setStencilTestEnable(true);
 	commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0xFF);
 	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
 	
@@ -1464,7 +1465,7 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 		commandBuffer.clearAttachments(1, &depthClearAttachment, 1, &clearArea);
 
 		commandBuffer.setStencilOp(vk::StencilFaceFlagBits::eFront, vk::StencilOp::eKeep,
-			vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eAlways);
+			vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::CompareOp::eEqual);
 
 		if(!mod) {
 			uint8_t value = nodeIndex;
@@ -1490,7 +1491,7 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 		}
 
 		commandBuffer.setStencilOp(vk::StencilFaceFlagBits::eFront, vk::StencilOp::eKeep,
-			vk::StencilOp::eKeep, vk::StencilOp::eReplace, vk::CompareOp::eEqual);
+			vk::StencilOp::eReplace, vk::StencilOp::eKeep, vk::CompareOp::eEqual);
 
 		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
 
