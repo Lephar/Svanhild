@@ -1450,11 +1450,11 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 	commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
-	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
-
 	commandBuffer.setStencilTestEnable(true);
 	commandBuffer.setStencilWriteMask(vk::StencilFaceFlagBits::eFront, 0xFF);
 	commandBuffer.clearAttachments(1, &stencilClearAttachment, 1, &clearArea);
+
+	std::shared_lock<std::shared_mutex> readLock{ uniformMutex };
 	
 	for (uint8_t nodeIndex = 0; nodeIndex < nodes.size(); nodeIndex++) {
 		auto& node = nodes.at(nodeIndex);
@@ -1520,6 +1520,8 @@ void updateCommandBuffer(uint32_t imageIndex, uint32_t queueIndex) {
 			}
 		}
 	}
+
+	readLock.unlock();
 
 	/*
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipelineLayout, 0, 1, &textures.front().descriptor, 1, &uniformLocation);
